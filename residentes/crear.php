@@ -1,114 +1,15 @@
-<?php
-require_once '../config/session.php';
-solo_admin();
-require_once '../config/db.php';
-
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('Location: listar.php'); exit;
+<?php require_once '../config/session.php'; solo_admin(); require_once '../config/db.php';
+$id=$_GET['id']??0; $r=['nombre'=>'','apellido'=>'','dni'=>'','fecha_nacimiento'=>'','movilidad_autonoma'=>1,'obs_medicas'=>'','contacto_familiar'=>'','telefono_familiar'=>'','id_habitacion'=>'','foto'=>'','estado'=>'activo'];
+if($id){$st=$pdo->prepare('SELECT * FROM residentes WHERE id_residente=?');$st->execute([$id]);$r=$st->fetch();}
+$habitaciones=$pdo->query("SELECT * FROM habitaciones WHERE eliminado=0 ORDER BY numero")->fetchAll();
+if($_SERVER['REQUEST_METHOD']==='POST'){
+ $foto=$_POST['foto_actual']??'';
+ if(!empty($_FILES['foto']['name'])){ $ext=strtolower(pathinfo($_FILES['foto']['name'],PATHINFO_EXTENSION)); if(!in_array($ext,['jpg','jpeg','png','webp'])) $ext='jpg'; $name='residente_'.time().'_'.rand(100,999).'.'.$ext; move_uploaded_file($_FILES['foto']['tmp_name'],__DIR__.'/../uploads/residentes/'.$name); $foto='uploads/residentes/'.$name; }
+ $habitacion = $_POST['id_habitacion'] ?: null;
+ $data=[$_POST['nombre'],$_POST['apellido'],$_POST['dni'],$_POST['fecha_nacimiento'],isset($_POST['movilidad_autonoma'])?1:0,$_POST['obs_medicas'],$_POST['contacto_familiar'],$_POST['telefono_familiar'],$habitacion,$foto,$_POST['estado'],uid()];
+ if($_POST['id']) $pdo->prepare('UPDATE residentes SET nombre=?,apellido=?,dni=?,fecha_nacimiento=?,movilidad_autonoma=?,obs_medicas=?,contacto_familiar=?,telefono_familiar=?,id_habitacion=?,foto=?,estado=?,created_by=? WHERE id_residente=?')->execute([...$data,$_POST['id']]);
+ else $pdo->prepare('INSERT INTO residentes(nombre,apellido,dni,fecha_nacimiento,movilidad_autonoma,obs_medicas,contacto_familiar,telefono_familiar,id_habitacion,foto,estado,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')->execute($data);
+ header('Location: listar.php'); exit;
 }
-
-$foto    = $_POST['foto_actual'] ?? '';
-$errores = [];
-
-if(empty(trim($_POST['nombre'])))   $errores[] = 'El nombre es obligatorio.';
-if(empty(trim($_POST['apellido']))) $errores[] = 'El apellido es obligatorio.';
-if(empty(trim($_POST['dni'])))      $errores[] = 'El DNI es obligatorio.';
-
-if(!empty($_POST['dni']) && !preg_match('/^[0-9]{7,8}$/', trim($_POST['dni']))){
-    $errores[] = 'El DNI debe tener entre 7 y 8 dígitos numéricos.';
-}
-
-if(!empty($_POST['dni']) && empty($errores)){
-    $q = $pdo->prepare('SELECT COUNT(*) FROM residentes WHERE dni=?' . ($_POST['id'] ? ' AND id_residente!=?' : ''));
-    $params = [$_POST['dni']];
-    if($_POST['id']) $params[] = $_POST['id'];
-    $q->execute($params);
-    if($q->fetchColumn() > 0)
-        $errores[] = 'Ya existe un residente con el DNI ' . htmlspecialchars($_POST['dni']) . '.';
-}
-
-if(!empty($errores)){
-    $_SESSION['error_form'] = implode(' | ', $errores);
-    $_SESSION['form_data']  = $_POST;
-    header('Location: listar.php' . ($_POST['id'] ? '?abrir_modal=' . $_POST['id'] : '?abrir_modal=nuevo'));
-    exit;
-}
-
-if (!empty($_FILES['foto']['name'])) {
-    $ext  = strtolower(pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION));
-    if (!in_array($ext, ['jpg','jpeg','png','webp'])) $ext = 'jpg';
-    $name = 'residente_' . time() . '_' . rand(100,999) . '.' . $ext;
-    move_uploaded_file($_FILES['foto']['tmp_name'], __DIR__ . '/../uploads/residentes/' . $name);
-    $foto = 'uploads/residentes/' . $name;
-}
-
-$habitacion = $_POST['id_habitacion'] ?: null;
-$cama       = $_POST['id_cama']       ?: null;
-
-try {
-    if ($_POST['id']) {
-        $anterior = $pdo->prepare('SELECT id_cama, id_habitacion FROM residentes WHERE id_residente=?');
-        $anterior->execute([$_POST['id']]);
-        $ant = $anterior->fetch();
-        if ($ant['id_cama'] && $ant['id_cama'] != $cama) {
-            $pdo->prepare("UPDATE camas SET estado='disponible', updated_by=? WHERE id_cama=?")
-                ->execute([uid(), $ant['id_cama']]);
-        }
-        $pdo->prepare('UPDATE residentes SET nombre=?,apellido=?,dni=?,fecha_nacimiento=?,fecha_ingreso=?,movilidad_autonoma=?,autorizado_foto=?,diagnostico=?,contacto_familiar=?,telefono_familiar=?,id_habitacion=?,id_cama=?,foto=?,estado=?,updated_by=? WHERE id_residente=?')
-            ->execute([
-                trim($_POST['nombre']),
-                trim($_POST['apellido']),
-                trim($_POST['dni']),
-                $_POST['fecha_nacimiento'] ?: null,
-                $_POST['fecha_ingreso']    ?: null,
-                isset($_POST['movilidad_autonoma']) ? 1 : 0,
-                isset($_POST['autorizado_foto'])    ? 1 : 0,
-                $_POST['diagnostico'],
-                $_POST['contacto_familiar'],
-                $_POST['telefono_familiar'],
-                $habitacion, $cama, $foto,
-                $_POST['estado'],
-                uid(), $_POST['id']
-            ]);
-        header('Location: listar.php?toast=Residente+modificado+correctamente&tipo=ok');
-    } else {
-        $pdo->prepare('INSERT INTO residentes(nombre,apellido,dni,fecha_nacimiento,fecha_ingreso,movilidad_autonoma,autorizado_foto,diagnostico,contacto_familiar,telefono_familiar,id_habitacion,id_cama,foto,estado,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-            ->execute([
-                trim($_POST['nombre']),
-                trim($_POST['apellido']),
-                trim($_POST['dni']),
-                $_POST['fecha_nacimiento'] ?: null,
-                $_POST['fecha_ingreso']    ?: null,
-                isset($_POST['movilidad_autonoma']) ? 1 : 0,
-                isset($_POST['autorizado_foto'])    ? 1 : 0,
-                $_POST['diagnostico'],
-                $_POST['contacto_familiar'],
-                $_POST['telefono_familiar'],
-                $habitacion, $cama, $foto,
-                'activo', uid()
-            ]);
-        $nuevo_id = $pdo->lastInsertId();
-        $pdo->prepare('INSERT INTO historial_estados(entidad,id_registro,estado_anterior,estado_nuevo,cambiado_por) VALUES(?,?,?,?,?)')
-            ->execute(['residente', $nuevo_id, '', 'activo', uid()]);
-        header('Location: listar.php?toast=Residente+creado+correctamente&tipo=ok');
-    }
-
-    if ($cama) {
-        $pdo->prepare("UPDATE camas SET estado='ocupada', updated_by=? WHERE id_cama=?")
-            ->execute([uid(), $cama]);
-    }
-    if ($habitacion) {
-        $pdo->prepare("UPDATE habitaciones SET estado='ocupada', updated_by=? WHERE id_habitacion=?")
-            ->execute([uid(), $habitacion]);
-    }
-    exit;
-
-} catch(PDOException $e) {
-    $_SESSION['error_form'] = $e->getCode() === '23000'
-        ? 'Ya existe un residente con ese DNI.'
-        : 'Error al guardar el residente. Verificá los datos e intentá de nuevo.';
-    $_SESSION['form_data'] = $_POST;
-    header('Location: listar.php' . ($_POST['id'] ? '?abrir_modal=' . $_POST['id'] : '?abrir_modal=nuevo'));
-    exit;
-}
-
+include '../config/menu.php'; ?>
+<h1><?= $id?'Modificar':'Crear' ?> residente</h1><div class="card"><form method="post" enctype="multipart/form-data"><input type="hidden" name="id" value="<?=$id?>"><input type="hidden" name="foto_actual" value="<?=htmlspecialchars($r['foto'])?>"><input name="nombre" placeholder="Nombre" value="<?=htmlspecialchars($r['nombre'])?>" required><input name="apellido" placeholder="Apellido" value="<?=htmlspecialchars($r['apellido'])?>" required><input name="dni" placeholder="DNI" value="<?=htmlspecialchars($r['dni'])?>" required><input type="date" name="fecha_nacimiento" value="<?=$r['fecha_nacimiento']?>"><label>Habitación del residente</label><select name="id_habitacion"><option value="">Sin asignar</option><?php foreach($habitaciones as $h):?><option value="<?=$h['id_habitacion']?>" <?=$r['id_habitacion']==$h['id_habitacion']?'selected':''?>>Hab. <?=$h['numero']?> - <?=$h['sector']?> - <?=$h['piso']?> - <?=$h['estado']?></option><?php endforeach;?></select><label><input style="width:auto" type="checkbox" name="movilidad_autonoma" <?=$r['movilidad_autonoma']?'checked':''?>>Movilidad autónoma</label><textarea name="obs_medicas" placeholder="Observaciones médicas"><?=htmlspecialchars($r['obs_medicas'])?></textarea><input name="contacto_familiar" placeholder="Contacto familiar" value="<?=htmlspecialchars($r['contacto_familiar'])?>"><input name="telefono_familiar" placeholder="Teléfono familiar" value="<?=htmlspecialchars($r['telefono_familiar'])?>"><label>Foto del residente</label><input type="file" name="foto" accept="image/*"><select name="estado"><option value="activo" <?=$r['estado']=='activo'?'selected':''?>>activo</option><option value="pausado" <?=$r['estado']=='pausado'?'selected':''?>>pausado</option><option value="baja" <?=$r['estado']=='baja'?'selected':''?>>baja</option></select><button>Guardar</button></form></div><?php include '../config/footer.php'; ?>
