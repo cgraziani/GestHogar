@@ -1,3 +1,28 @@
-<?php require_once '../config/db.php'; require_once '../config/app.php'; $token=$_GET['token']??($_POST['token']??''); $msg='';
-if($_SERVER['REQUEST_METHOD']==='POST'){ $pass=password_hash($_POST['password'],PASSWORD_DEFAULT); $st=$pdo->prepare('UPDATE usuarios SET password=?, token_recuperacion=NULL WHERE token_recuperacion=?'); $st->execute([$pass,$token]); $msg='Contraseña actualizada. Ya podés entrar.'; }
-?><!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="<?=BASE_URL?>/assets/css/style.css?v=10"></head><body class="login-bg"><div class="login-card"><h1>Nueva contraseña</h1><form method="post"><input type="hidden" name="token" value="<?=htmlspecialchars($token)?>"><input name="password" type="password" placeholder="Nueva contraseña" required><button>Guardar</button></form><p><?=$msg?></p><a href="login.php">Login</a></div></body></html>
+<?php require_once '../config/db.php';
+require_once '../config/app.php';
+$token = $_GET['token'] ?? ($_POST['token'] ?? '');
+$msg = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $pass = password_hash($_POST['password'], PASSWORD_DEFAULT);
+    $st = $pdo->prepare('UPDATE usuarios SET password=?, token_recuperacion=NULL WHERE token_recuperacion=?');
+    $st->execute([$pass, $token]);
+    $msg = 'Contraseña actualizada. Ya podés entrar.';
+}
+?><!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css?v=10">
+</head>
+
+<body class="login-bg">
+    <div class="login-card">
+        <h1>Nueva contraseña</h1>
+        <form method="post"><input type="hidden" name="token" value="<?= htmlspecialchars($token) ?>"><input
+                name="password" type="password" placeholder="Nueva contraseña" required><button>Guardar</button></form>
+        <p><?= $msg ?></p><a href="login.php">Login</a>
+    </div>
+</body>
+
+</html>

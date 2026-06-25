@@ -37,7 +37,15 @@ include '../config/menu.php';
 <label>Apellido</label><input name="apellido" value="<?=htmlspecialchars($edit['apellido'] ?? '')?>" placeholder="Apellido" required>
 <label>DNI</label><input name="dni" value="<?=htmlspecialchars($edit['dni'] ?? '')?>" placeholder="DNI">
 <label>Teléfono</label><input name="telefono" value="<?=htmlspecialchars($edit['telefono'] ?? '')?>" placeholder="Teléfono">
-<label>Tipo de turno</label><input name="tipo_turno" value="<?=htmlspecialchars($edit['tipo_turno'] ?? '')?>">
+<label>Tipo de turno</label>
+<select name="tipo_turno">
+    <option value="" <?= (!$edit || $edit['tipo_turno']=='')?'selected':'' ?>>Sin especificar</option>
+    <option value="24/48" <?= ($edit && $edit['tipo_turno']==='24/48')?'selected':'' ?>>24/48 horas</option>
+    <option value="12hs Diurno" <?= ($edit && $edit['tipo_turno']==='12hs Diurno')?'selected':'' ?>>12hs Diurno</option>
+    <option value="24hs" <?= ($edit && $edit['tipo_turno']==='24hs')?'selected':'' ?>>24hs</option>
+    <option value="Refuerzo mañana" <?= ($edit && $edit['tipo_turno']==='Refuerzo mañana')?'selected':'' ?>>Refuerzo mañana</option>
+    <option value="Refuerzo tarde" <?= ($edit && $edit['tipo_turno']==='Refuerzo tarde')?'selected':'' ?>>Refuerzo tarde</option>
+</select>
 <label>Estado</label><select name="estado"><option value="activo" <?=($edit && $edit['estado']=='activo')?'selected':''?>>Activo</option><option value="pausado" <?=($edit && $edit['estado']=='pausado')?'selected':''?>>Pausado</option><option value="baja" <?=($edit && $edit['estado']=='baja')?'selected':''?>>Baja</option></select>
 <button>Guardar</button> <a class="btn gray" href="listar.php">Volver</a>
 </form>

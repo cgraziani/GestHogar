@@ -5,20 +5,32 @@ require_once '../config/db.php';
 
 function back_cal(){ header('Location: calendario.php'); exit; }
 function h($s){ return htmlspecialchars($s ?? '', ENT_QUOTES, 'UTF-8'); }
+function link_dia($fecha){ return '?dia='.urlencode($fecha); }
 
 if($_SERVER['REQUEST_METHOD']==='POST' && es_admin()){
     $accion=$_POST['accion'] ?? 'crear';
     if($accion==='crear'){
         $fechas=$_POST['fechas'] ?? [];
         if(empty($fechas) && !empty($_POST['fecha'])) $fechas=[$_POST['fecha']];
+        $minCargaPost = new DateTime(date('Y-m-d'));
+        $maxCargaPost = (clone $minCargaPost)->modify('+14 days');
         foreach($fechas as $f){
             if(!$f) continue;
+            $fechaObj = DateTime::createFromFormat('Y-m-d', $f);
+            if(!$fechaObj || $fechaObj < $minCargaPost || $fechaObj > $maxCargaPost) continue;
             $pdo->prepare('INSERT INTO turnos_programados(id_cuidadora_usuario,fecha,hora_inicio,hora_fin,nota,created_by) VALUES(?,?,?,?,?,?)')
                 ->execute([$_POST['id_personal'],$f,$_POST['hora_inicio'],$_POST['hora_fin'],$_POST['nota'],uid()]);
         }
         back_cal();
     }
     if($accion==='editar'){
+        $minCargaPost = new DateTime(date('Y-m-d'));
+        $maxCargaPost = (clone $minCargaPost)->modify('+14 days');
+        $fechaObj = DateTime::createFromFormat('Y-m-d', $_POST['fecha']);
+        if(!$fechaObj || $fechaObj < $minCargaPost || $fechaObj > $maxCargaPost){
+            header('Location: calendario.php?toast=Solo+se+pueden+modificar+turnos+desde+hoy+hasta+14+dias+adelante&tipo=warn');
+            exit;
+        }
         $pdo->prepare('UPDATE turnos_programados SET id_cuidadora_usuario=?, fecha=?, hora_inicio=?, hora_fin=?, nota=? WHERE id_turno_prog=?')
             ->execute([$_POST['id_personal'],$_POST['fecha'],$_POST['hora_inicio'],$_POST['hora_fin'],$_POST['nota'],$_POST['id_turno_prog']]);
         back_cal();
@@ -41,6 +53,8 @@ if(es_admin()){
     $personal=$stPersonal->fetchAll();
 }
 $base = new DateTime(date('Y-m-d'));
+$minCarga = new DateTime(date('Y-m-d'));
+$maxCarga = (clone $minCarga)->modify('+14 days');
 $inicio = clone $base; $inicio->modify('monday this week')->modify('-7 days');
 $fin = clone $inicio; $fin->modify('+20 days');
 $inicioConsulta = clone $inicio; $inicioConsulta->modify('-1 day');
@@ -107,14 +121,15 @@ $stDia->execute([$diaSel,$diaSel]); $turnosDia=$stDia->fetchAll();
             <input name="nota" placeholder="Nota del turno" value="<?=h($editar['nota']??'')?>">
         </div>
         <?php if($editar): ?>
-            <label>Fecha</label><input type="date" name="fecha" value="<?=$editar['fecha']?>" required>
+            <label>Fecha</label><input type="date" name="fecha" value="<?=$editar['fecha']?>" min="<?=$minCarga->format('Y-m-d')?>" max="<?=$maxCarga->format('Y-m-d')?>" required>
         <?php else: ?>
             <label><b>Seleccionar días</b></label>
             <div class="multi-days">
-                <?php for($i=0;$i<21;$i++): $d=(clone $inicio)->modify("+$i days"); ?>
-                    <label><input type="checkbox" name="fechas[]" value="<?=$d->format('Y-m-d')?>"> <?=$dias[$i%7]?><br><small><?=$d->format('d/m')?></small></label>
+                <?php for($i=0;$i<=14;$i++): $d=(clone $minCarga)->modify("+$i days"); ?>
+                    <label><input type="checkbox" name="fechas[]" value="<?=$d->format('Y-m-d')?>"> <?=$dias[((int)$d->format('N'))-1]?><br><small><?=$d->format('d/m')?></small></label>
                 <?php endfor; ?>
             </div>
+            <div class="small"><b>Importante:</b> solo se pueden cargar turnos desde hoy hasta 14 días hacia adelante. La semana anterior queda solo para consultar.</div>
         <?php endif; ?>
         <button><?= $editar ? 'Guardar modificación' : 'Guardar turnos' ?></button>
         <?php if($editar): ?><a class="btn gray" href="calendario.php">Cancelar</a><?php endif; ?>
@@ -129,43 +144,104 @@ $stDia->execute([$diaSel,$diaSel]); $turnosDia=$stDia->fetchAll();
         <div class="turno-chip" style="--c:<?=h($t['color'])?>">
             <b><?=h($t['personal'])?></b> <span class="badge"><?=h($t['rol'])?></span><br>
             <?=h($t['hora_inicio'])?> a <?=h($t['hora_fin'])?> · <?=h($t['nota'])?><br>
-            <?php if(es_admin()): ?>
+            <?php $puedeEditarTurno = es_admin() && $t['fecha'] >= $minCarga->format('Y-m-d') && $t['fecha'] <= $maxCarga->format('Y-m-d'); ?>
+            <?php if($puedeEditarTurno): ?>
                 <a class="btn blue" href="?editar=<?=$t['id_turno_prog']?>&dia=<?=$diaSel?>">Modificar</a>
                 <a class="btn red" href="?eliminar=<?=$t['id_turno_prog']?>" onclick="return confirm('¿Quitar este turno?')">Quitar</a>
+            <?php elseif(es_admin()): ?>
+                <span class="small">Solo consulta</span>
             <?php endif; ?>
         </div>
     <?php endforeach; ?>
     </div>
 </div>
 
-<?php for($w=0;$w<3;$w++): $weekStart=(clone $inicio)->modify('+'.($w*7).' days'); $weekEnd=(clone $weekStart)->modify('+6 days'); ?>
-<div class="card calendar-wrap">
-    <div class="calendar-head">
-        <h2><?= $w==0?'Semana anterior':($w==1?'Semana actual':'Semana próxima') ?>: <?=$weekStart->format('d/m/Y')?> al <?=$weekEnd->format('d/m/Y')?></h2>
+<div class="card carousel-panel">
+    <div class="calendar-head calendar-head-carousel">
+        <button type="button" class="btn gray carousel-btn" data-dir="-1">◀ Semana anterior</button>
+        <div class="carousel-title-box">
+            <h2 id="carouselTitle">Semana actual</h2>
+        </div>
+        <button type="button" class="btn gray carousel-btn" data-dir="1">Semana siguiente ▶</button>
     </div>
-    <div class="schedule-grid">
-        <div class="schedule-cell schedule-time schedule-title">Hora</div>
-        <?php for($i=0;$i<7;$i++): $d=(clone $weekStart)->modify("+$i days"); ?>
-            <a class="schedule-cell schedule-day-title day-click" href="?dia=<?=$d->format('Y-m-d')?>">
-                <?=$dias[$i]?><br><span class="small-white"><?=$d->format('d/m/Y')?></span>
-            </a>
-        <?php endfor; ?>
-        <?php for($h=0;$h<24;$h++): ?>
-            <div class="schedule-cell schedule-time"><?=str_pad($h,2,'0',STR_PAD_LEFT)?>:00</div>
-            <?php for($i=0;$i<7;$i++): $d=(clone $weekStart)->modify("+$i days"); $key=$d->format('Y-m-d'); ?>
-                <div class="schedule-cell schedule-slot <?=!empty($by[$key][$h])?'slot-ocupado':''?>">
-                    <?php foreach(($by[$key][$h]??[]) as $r):?>
-                        <div class="turno-chip turno-mini turno-hour" style="--c:<?=h($r['color'])?>; background:<?=h($r['color'])?>1a;">
-                            <b><?=h($r['personal'])?></b> <span class="badge"><?=h($r['rol'])?></span><br>
-                            <span class="small"><?=h($r['hora_inicio'])?> a <?=h($r['hora_fin'])?></span>
-                            <?php if(!empty($r['nota']) && !$r['continua']):?><br><span class="small"><?=h($r['nota'])?></span><?php endif;?>
-                            <?php if(es_admin() && !$r['continua']):?><br><a class="btn blue" href="?editar=<?=$r['id_turno_prog']?>&dia=<?=$key?>">Editar</a><?php endif;?>
+
+    <div class="calendar-tools">
+        <button type="button" class="btn blue" id="btnHoy">Hoy</button>
+        <label class="go-date">
+            <span>Ir a fecha</span>
+            <input type="date" id="goDate" value="<?=h($diaSel)?>">
+        </label>
+    </div>
+
+    <div class="week-dots" aria-label="Semanas disponibles">
+        <button type="button" class="week-dot" data-week="0">Semana anterior</button>
+        <button type="button" class="week-dot active" data-week="1">Semana actual</button>
+        <button type="button" class="week-dot" data-week="2">Semana próxima</button>
+    </div>
+
+    <div class="calendar-carousel" id="calendarCarousel">
+        <?php for($w=0;$w<3;$w++): $weekStart=(clone $inicio)->modify('+'.($w*7).' days'); $weekEnd=(clone $weekStart)->modify('+6 days'); ?>
+        <div class="calendar-slide <?= $w==1?'active':'' ?>" data-title="<?= $w==0?'Semana anterior':($w==1?'Semana actual':'Semana próxima') ?>: <?=$weekStart->format('d/m/Y')?> al <?=$weekEnd->format('d/m/Y')?>">
+            <div class="schedule-grid schedule-grid-fit">
+                <div class="schedule-cell schedule-time schedule-title">Hora</div>
+                <?php for($i=0;$i<7;$i++): $d=(clone $weekStart)->modify("+$i days"); ?>
+                    <a class="schedule-cell schedule-day-title day-click" href="?dia=<?=$d->format('Y-m-d')?>">
+                        <?=$dias[$i]?><br><span class="small-white"><?=$d->format('d/m')?></span>
+                    </a>
+                <?php endfor; ?>
+                <?php for($h=0;$h<24;$h++): ?>
+                    <div class="schedule-cell schedule-time"><?=str_pad($h,2,'0',STR_PAD_LEFT)?>:00</div>
+                    <?php for($i=0;$i<7;$i++): $d=(clone $weekStart)->modify("+$i days"); $key=$d->format('Y-m-d'); ?>
+                        <div class="schedule-cell schedule-slot <?=!empty($by[$key][$h])?'slot-ocupado':''?>">
+                            <?php foreach(($by[$key][$h]??[]) as $r):?>
+                                <div class="turno-chip turno-mini turno-hour" style="--c:<?=h($r['color'])?>; background:<?=h($r['color'])?>1a;">
+                                    <b><?=h($r['personal'])?></b> <span class="badge"><?=h($r['rol'])?></span><br>
+                                    <span class="small"><?=h($r['hora_inicio'])?> a <?=h($r['hora_fin'])?></span>
+                                    <?php if(!empty($r['nota']) && !$r['continua']):?><br><span class="small"><?=h($r['nota'])?></span><?php endif;?>
+                                    <?php $puedeEditarBloque = es_admin() && !$r['continua'] && $r['fecha'] >= $minCarga->format('Y-m-d') && $r['fecha'] <= $maxCarga->format('Y-m-d'); ?>
+                            <?php if($puedeEditarBloque):?><br><a class="btn blue" href="?editar=<?=$r['id_turno_prog']?>&dia=<?=$key?>">Editar</a><?php endif;?>
+                                </div>
+                            <?php endforeach; ?>
                         </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endfor; ?>
+                    <?php endfor; ?>
+                <?php endfor; ?>
+            </div>
+        </div>
         <?php endfor; ?>
     </div>
 </div>
-<?php endfor; ?>
+
+<script>
+(function(){
+    const slides = Array.from(document.querySelectorAll('.calendar-slide'));
+    const dots = Array.from(document.querySelectorAll('.week-dot'));
+    const title = document.getElementById('carouselTitle');
+    let current = 1;
+
+    function showWeek(index){
+        if(index < 0) index = 0;
+        if(index > slides.length - 1) index = slides.length - 1;
+        current = index;
+        slides.forEach((s,i)=>s.classList.toggle('active', i === current));
+        dots.forEach((d,i)=>d.classList.toggle('active', i === current));
+        if(title && slides[current]) title.textContent = slides[current].dataset.title || 'Calendario';
+    }
+
+    document.querySelectorAll('.carousel-btn').forEach(btn=>{
+        btn.addEventListener('click', ()=> showWeek(current + parseInt(btn.dataset.dir || '0', 10)));
+    });
+    dots.forEach(dot=>dot.addEventListener('click', ()=> showWeek(parseInt(dot.dataset.week || '1', 10))));
+
+    const btnHoy = document.getElementById('btnHoy');
+    if(btnHoy) btnHoy.addEventListener('click', ()=> window.location.href = 'calendario.php?dia=<?=date('Y-m-d')?>');
+
+    const goDate = document.getElementById('goDate');
+    if(goDate) goDate.addEventListener('change', ()=>{
+        if(goDate.value) window.location.href = 'calendario.php?dia=' + encodeURIComponent(goDate.value);
+    });
+
+    showWeek(current);
+})();
+</script>
+
 <?php include '../config/footer.php'; ?>
