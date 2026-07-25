@@ -21,7 +21,9 @@ require_once __DIR__ . '/app.php';
 
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
 
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css?v=11">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.default.min.css">
+
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css?v=<?= ASSETS_VER ?>">
 </head>
 
 <body>

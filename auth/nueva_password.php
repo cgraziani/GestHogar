@@ -13,14 +13,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <head>
     <meta charset="utf-8">
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css?v=10">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css?v=<?= ASSETS_VER ?>">
 </head>
 
 <body class="login-bg">
     <div class="login-card">
         <h1>Nueva contraseña</h1>
         <form method="post"><input type="hidden" name="token" value="<?= htmlspecialchars($token) ?>"><input
-                name="password" type="password" placeholder="Nueva contraseña" required><button>Guardar</button></form>
+                name="password" type="password" placeholder="Nueva contraseña" required><button class="btn">Guardar</button></form>
         <p><?= $msg ?></p><a href="login.php">Login</a>
     </div>
 </body>

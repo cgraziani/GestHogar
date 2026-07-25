@@ -70,7 +70,10 @@ $iniciales = mb_strtoupper(mb_substr($partes[0], 0, 1)) . (isset($partes[1]) ? m
         <?php endif; ?>
         <?php if (es_admin() || es_cuidadora()): ?>
             <?php menu_link('/residentes/listar.php', 'Residentes'); ?>
-            <?php menu_link('/medicacion/listar.php', 'Medicación / Recetas / Tareas'); ?>
+            <?php menu_link('/medicacion/listar.php', 'Medicación'); ?>
+            <?php menu_link('/medicacion/recetas.php', 'Recetas'); ?>
+            <?php menu_link('/medicacion/tareas.php', 'Tareas de cuidado'); ?>
+            <?php menu_link('/visitas/listar.php', 'Visitas'); ?>
             <?php menu_link('/turnos/listar.php', 'Novedades'); ?>
         <?php endif; ?>
         <?php if (es_admin() || es_cuidadora() || es_cocinera() || es_asistente()): ?>

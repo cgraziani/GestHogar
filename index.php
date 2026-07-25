@@ -3,14 +3,17 @@ require_login();
 require_once 'config/db.php';
 include 'config/menu.php';
 
-$total_residentes = $pdo->query("SELECT COUNT(*) FROM residentes WHERE eliminado=0")->fetchColumn();
-$total_activos    = $pdo->query("SELECT COUNT(*) FROM residentes WHERE eliminado=0 AND estado='activo'")->fetchColumn();
-$total_usuarios   = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE eliminado=0")->fetchColumn();
-$total_cuidadoras = $pdo->query("SELECT COUNT(*) FROM cuidadoras WHERE eliminado=0")->fetchColumn();
-$total_planes     = $pdo->query("SELECT COUNT(*) FROM medicacion_residente WHERE eliminado=0 AND estado='activo'")->fetchColumn();
+$total_residentes = $pdo->query("SELECT COUNT(*) FROM residentes")->fetchColumn();
+$total_activos    = $pdo->query("SELECT COUNT(*) FROM residentes WHERE estado='activo'")->fetchColumn();
+$total_usuarios   = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE estado!='baja'")->fetchColumn();
+$total_cuidadoras = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE rol IN ('cuidadora','asistente') AND estado='activo'")->fetchColumn();
+$total_planes     = $pdo->query("SELECT COUNT(*) FROM medicacion_residente WHERE estado='activo'")->fetchColumn();
+$total_visitas_hoy = $pdo->query("SELECT COUNT(*) FROM visitas
+    WHERE estado IN('agendada','en_curso')
+    AND DATE(COALESCE(fecha_programada, hora_ingreso)) = CURDATE()")->fetchColumn();
 
-$hoy   = date('Y-m-d');
-$turnos = $pdo->prepare("SELECT tp.*,u.nombre cuidadora,u.color,u.rol FROM turnos_programados tp JOIN usuarios u ON u.id_usuario=tp.id_cuidadora_usuario WHERE tp.eliminado=0 AND tp.fecha>=? ORDER BY tp.fecha,tp.hora_inicio LIMIT 20");
+$hoy    = date('Y-m-d');
+$turnos = $pdo->prepare("SELECT tp.*,u.nombre cuidadora,u.color,u.rol FROM turnos_programados tp JOIN usuarios u ON u.id_usuario=tp.id_cuidadora_usuario WHERE tp.estado='activo' AND tp.fecha>=? ORDER BY tp.fecha,tp.hora_inicio LIMIT 20");
 $turnos->execute([$hoy]);
 $turnos = $turnos->fetchAll();
 ?>
@@ -20,35 +23,43 @@ $turnos = $turnos->fetchAll();
 <?php if (es_admin()): ?>
 
 <div class="grid">
-    <a href="residentes/listar.php" style="text-decoration:none">
-        <div class="card" style="text-align:center;cursor:pointer">
-            <div class="stat"><?= $total_activos ?> <span style="font-size:16px;color:#888">/ <?= $total_residentes ?></span></div>
+    <a href="residentes/listar.php">
+        <div class="card" style="text-align:center">
+            <div class="stat"><?= $total_activos ?> <span style="font-size:16px;color:var(--text-muted)">/ <?= $total_residentes ?></span></div>
             <b>Residentes activos</b><br>
-            <span class="small" style="color:#2D9B8A">Ver listado →</span>
+            <span class="small" style="color:var(--color-accent)">Ver listado →</span>
         </div>
     </a>
 
-    <a href="admin/usuarios.php" style="text-decoration:none">
-        <div class="card" style="text-align:center;cursor:pointer">
+    <a href="admin/usuarios.php">
+        <div class="card" style="text-align:center">
             <div class="stat"><?= $total_usuarios ?></div>
             <b>Usuarios</b><br>
-            <span class="small" style="color:#2D9B8A">Ver listado →</span>
+            <span class="small" style="color:var(--color-accent)">Ver listado →</span>
         </div>
     </a>
 
-    <a href="cuidadoras/listar.php" style="text-decoration:none">
-        <div class="card" style="text-align:center;cursor:pointer">
+    <a href="admin/usuarios.php">
+        <div class="card" style="text-align:center">
             <div class="stat"><?= $total_cuidadoras ?></div>
-            <b>Cuidadoras</b><br>
-            <span class="small" style="color:#2D9B8A">Ver listado →</span>
+            <b>Cuidadoras activas</b><br>
+            <span class="small" style="color:var(--color-accent)">Ver usuarios →</span>
         </div>
     </a>
 
-    <a href="medicacion/listar.php" style="text-decoration:none">
-        <div class="card" style="text-align:center;cursor:pointer">
+    <a href="medicacion/listar.php">
+        <div class="card" style="text-align:center">
             <div class="stat"><?= $total_planes ?></div>
             <b>Planes de medicación</b><br>
-            <span class="small" style="color:#2D9B8A">Ver medicación →</span>
+            <span class="small" style="color:var(--color-accent)">Ver medicación →</span>
+        </div>
+    </a>
+
+    <a href="visitas/listar.php">
+        <div class="card" style="text-align:center">
+            <div class="stat"><?= $total_visitas_hoy ?></div>
+            <b>Visitas de hoy</b><br>
+            <span class="small" style="color:var(--color-accent)">Ver visitas →</span>
         </div>
     </a>
 </div>
@@ -88,7 +99,8 @@ $turnos = $turnos->fetchAll();
     <div class="card">
         <h2>Panel de cuidadora</h2>
         <p>
-            <a class="btn" href="medicacion/listar.php">Ver medicación y tareas</a>
+            <a class="btn" href="medicacion/listar.php">Ver medicación</a>
+            <a class="btn" href="medicacion/tareas.php">Ver tareas de cuidado</a>
             <a class="btn gray" href="turnos/calendario.php">Ver calendario</a>
         </p>
     </div>
@@ -107,7 +119,8 @@ $turnos = $turnos->fetchAll();
         <h2>Panel de asistente</h2>
         <p>
             <a class="btn gray" href="turnos/calendario.php">Ver calendario</a>
-            <a class="btn" href="medicacion/listar.php">Ver medicación y tareas</a>
+            <a class="btn" href="medicacion/listar.php">Ver medicación</a>
+            <a class="btn" href="medicacion/tareas.php">Ver tareas de cuidado</a>
         </p>
     </div>
 

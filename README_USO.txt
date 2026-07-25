@@ -1,19 +1,21 @@
 GESTHOGAR - XAMPP
 
-1) Copiar la carpeta GestHogar_XAMPP en C:\xampp\htdocs\
+1) Copiar la carpeta GestHogar en la carpeta htdocs de XAMPP.
 2) Activar Apache y MySQL en XAMPP.
-3) Abrir: http://localhost/GestHogar_XAMPP/instalar.php
-4) Luego abrir: http://localhost/GestHogar_XAMPP/auth/login.php
+3) Abrir: http://localhost/GestHogar/instalar.php
+   (si la base ya existe y la querés recrear desde cero:
+    http://localhost/GestHogar/instalar.php?reemplazar=1 — borra los datos)
+4) Luego abrir: http://localhost/GestHogar/auth/login.php
 
 Base de datos: gesthogar_db
 
 Usuarios de prueba:
-- admin@gesthogar.com / Admin123
-- ana@gesthogar.com / Admin123
-- sofia@gesthogar.com / Admin123
-- laura@gesthogar.com / Admin123
-- daniela@gesthogar.com / Admin123
-- marta@gesthogar.com / Admin123
+- admin@gesthogar.com / password
+- ana@gesthogar.com / password
+- sofia@gesthogar.com / password
+- laura@gesthogar.com / password
+- daniela@gesthogar.com / password
+- marta@gesthogar.com / password
 
 Cambios principales:
 - Calendario de 3 semanas: una hacia atras y dos hacia adelante.

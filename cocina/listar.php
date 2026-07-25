@@ -9,65 +9,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (es_admin() || es_cocinera())) {
         if (!is_dir('../uploads/cocina')) mkdir('../uploads/cocina', 0777, true);
         $ext  = strtolower(pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION));
         if (!in_array($ext, ['jpg','jpeg','png','webp'])) $ext = 'jpg';
-        $name = 'cocina_' . time() . '_' . rand(100, 999) . '.' . $ext;
+        $name = 'cocina_' . time() . '_' . rand(100,999) . '.' . $ext;
         move_uploaded_file($_FILES['foto']['tmp_name'], __DIR__ . '/../uploads/cocina/' . $name);
         $foto = 'uploads/cocina/' . $name;
     }
-    $pdo->prepare('INSERT INTO cocina(id_usuario,tipo,titulo,descripcion,monto,foto,fecha) VALUES(?,?,?,?,?,?,?)')
-        ->execute([uid(), $_POST['tipo'], $_POST['titulo'], $_POST['descripcion'], $_POST['monto'] ?: 0, $foto, $_POST['fecha']]);
+    $tipo  = $_POST['tipo'];
+    $monto = ($tipo === 'gasto' && $_POST['monto'] !== '') ? $_POST['monto'] : null;
+
+    $pdo->prepare('INSERT INTO cocina(id_usuario,tipo,titulo,descripcion,monto,foto,fecha,created_by) VALUES(?,?,?,?,?,?,?,?)')
+        ->execute([uid(), $tipo, $_POST['titulo'], $_POST['descripcion'], $monto, $foto, $_POST['fecha'], uid()]);
     header('Location: listar.php?toast=Registro+guardado+correctamente&tipo=ok');
     exit;
 }
 
 if (isset($_GET['eliminar']) && es_admin()) {
-    $pdo->prepare('UPDATE cocina SET eliminado=1 WHERE id_cocina=?')->execute([$_GET['eliminar']]);
-    $pdo->prepare("INSERT INTO papelera(tabla,registro_id,accion,usuario) VALUES('cocina',?,'eliminado',?)")
-        ->execute([$_GET['eliminar'], $_SESSION['usuario']['email']]);
-    header('Location: listar.php?toast=Registro+enviado+a+la+papelera&tipo=warn');
+    $pdo->prepare("UPDATE cocina SET estado='baja', updated_by=? WHERE id_cocina=?")
+        ->execute([uid(), $_GET['eliminar']]);
+    header('Location: listar.php?toast=Registro+dado+de+baja&tipo=warn');
     exit;
 }
 
 include '../config/menu.php';
 
-$rows = $pdo->query("SELECT c.*,u.nombre usuario FROM cocina c
+$rows = $pdo->query("SELECT c.*, u.nombre usuario FROM cocina c
                      JOIN usuarios u ON c.id_usuario=u.id_usuario
-                     WHERE c.eliminado=0
+                     WHERE c.estado='activo'
                      ORDER BY c.fecha DESC")->fetchAll();
+
+$mes_actual = date('Y-m');
+$total_gastos = $pdo->query("SELECT COALESCE(SUM(monto),0) FROM cocina WHERE tipo='gasto' AND estado='activo' AND DATE_FORMAT(fecha,'%Y-%m')='$mes_actual'")->fetchColumn();
+$total_recetas = $pdo->query("SELECT COUNT(*) FROM cocina WHERE tipo='receta' AND estado='activo' AND DATE_FORMAT(fecha,'%Y-%m')='$mes_actual'")->fetchColumn();
 ?>
 
 <h1>Cocina: recetas y gastos diarios</h1>
+
+<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <div class="card" style="flex:1;text-align:center;min-width:140px">
+        <div class="stat">$<?= number_format($total_gastos, 2, ',', '.') ?></div>
+        <b>Gastos del mes</b>
+    </div>
+    <div class="card" style="flex:1;text-align:center;min-width:140px">
+        <div class="stat"><?= $total_recetas ?></div>
+        <b>Recetas del mes</b>
+    </div>
+</div>
 
 <?php if (es_admin() || es_cocinera()): ?>
 <div class="card">
     <h2>Cargar receta, menú o gasto diario</h2>
     <form method="post" enctype="multipart/form-data">
-
         <label>Tipo de registro</label>
-        <select name="tipo">
+        <select name="tipo" id="sel-tipo" onchange="toggleMonto()">
             <option value="receta">Receta / Menú del día</option>
             <option value="gasto">Gasto diario</option>
         </select>
 
         <label>Título <span style="color:red">*</span></label>
-        <input name="titulo"
-               required>
+        <input name="titulo" required>
 
         <label>Descripción / Ingredientes / Detalle</label>
-        <textarea name="descripcion"
-                  placeholder="Ingredientes, preparación o detalle del gasto"
-                  rows="3"></textarea>
+        <textarea name="descripcion" placeholder="Ingredientes, preparación o detalle del gasto" rows="3"></textarea>
 
-        <label>Monto / Costo</label>
-        <input name="monto"
-               type="number"
-               step="0.01"
-               min="0">
+        <div id="bloque-monto">
+            <label>Monto / Costo <span id="monto-req" style="color:red;display:none">*</span></label>
+            <input name="monto" type="number" step="0.01" min="0" id="input-monto">
+        </div>
 
         <label>Fecha <span style="color:red">*</span></label>
-        <input type="date"
-               name="fecha"
-               value="<?= date('Y-m-d') ?>"
-               required>
+        <input type="date" name="fecha" value="<?= date('Y-m-d') ?>" required>
 
         <label>Foto de la comida o comprobante (opcional)</label>
         <input type="file" name="foto" accept="image/*">
@@ -84,12 +93,8 @@ $rows = $pdo->query("SELECT c.*,u.nombre usuario FROM cocina c
 <table class="datatable">
     <thead>
         <tr>
-            <th>Foto</th>
-            <th>Tipo</th>
-            <th>Título</th>
-            <th>Monto</th>
-            <th>Fecha</th>
-            <th>Cargó</th>
+            <th>Foto</th><th>Tipo</th><th>Título</th>
+            <th>Monto</th><th>Fecha</th><th>Cargó</th>
             <?php if (es_admin()): ?><th>Acciones</th><?php endif; ?>
         </tr>
     </thead>
@@ -118,7 +123,7 @@ $rows = $pdo->query("SELECT c.*,u.nombre usuario FROM cocina c
                 <?php endif; ?>
             </td>
             <td>
-                <?= $r['monto'] > 0
+                <?= $r['monto'] !== null
                     ? '$' . number_format($r['monto'], 2, ',', '.')
                     : '<span style="color:#ccc"></span>' ?>
             </td>
@@ -128,8 +133,8 @@ $rows = $pdo->query("SELECT c.*,u.nombre usuario FROM cocina c
             <td>
                 <a class="btn red"
                    href="?eliminar=<?= $r['id_cocina'] ?>"
-                   onclick="return confirm('¿Enviar este registro a la papelera?')">
-                   Papelera
+                   onclick="return confirm('¿Dar de baja este registro?')">
+                   Dar de baja
                 </a>
             </td>
             <?php endif; ?>
@@ -137,5 +142,16 @@ $rows = $pdo->query("SELECT c.*,u.nombre usuario FROM cocina c
     <?php endforeach; ?>
     </tbody>
 </table>
+
+<script>
+function toggleMonto() {
+    var tipo  = document.getElementById('sel-tipo').value;
+    var input = document.getElementById('input-monto');
+    var req   = document.getElementById('monto-req');
+    input.required = (tipo === 'gasto');
+    req.style.display = (tipo === 'gasto') ? 'inline' : 'none';
+}
+window.addEventListener('DOMContentLoaded', toggleMonto);
+</script>
 
 <?php include '../config/footer.php'; ?>
