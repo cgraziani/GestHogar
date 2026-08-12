@@ -41,6 +41,25 @@ if (isset($_GET['accion']) && es_admin()) {
         }
     }
 
+    if ($accion === 'baja' && !isset($_GET['confirmar_baja'])) {
+        $med_pendiente = $pdo->prepare("
+            SELECT COUNT(*) FROM medicacion_residente mr
+            WHERE mr.id_residente = ?
+              AND mr.estado = 'activo'
+              AND mr.horario <= TIME(NOW())
+              AND NOT EXISTS (
+                SELECT 1 FROM administracion_medicacion am
+                WHERE am.id_plan = mr.id_plan
+                  AND DATE(am.fecha_hora) = CURDATE()
+              )
+        ");
+        $med_pendiente->execute([$id_res]);
+        if ($med_pendiente->fetchColumn() > 0) {
+            header('Location: listar.php?cb03_warn=' . $id_res);
+            exit;
+        }
+    }
+
     $motivo    = trim($_GET['motivo'] ?? '');
     $fecha_fin = trim($_GET['fecha_fin'] ?? '') ?: null;
 
@@ -287,119 +306,6 @@ if (isset($_GET['ver'])) {
 <?php endif; ?>
 <a class="btn gray" href="listar.php">Volver al listado</a>
 
-<?php if (es_admin()):
-$habitaciones_modal = $pdo->query("SELECT * FROM habitaciones ORDER BY numero")->fetchAll();
-$camas_modal        = $pdo->query("SELECT * FROM camas ORDER BY id_habitacion, identificador")->fetchAll();
-?>
-<div id="modal-residente" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
-    <div style="background:var(--bg-surface);color:var(--text-main);border-radius:10px;padding:28px;width:100%;max-width:580px;position:relative;max-height:90vh;overflow-y:auto">
-        <button onclick="cerrarModalResidente()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)">×</button>
-        <h2 id="modal-res-titulo">Modificar residente</h2>
-        <form method="post" action="crear.php" enctype="multipart/form-data" id="form-residente">
-            <input type="hidden" name="id"          id="f-res-id">
-            <input type="hidden" name="foto_actual" id="f-res-foto">
-            <input type="hidden" name="estado"      id="f-res-estado" value="activo">
-            <label>Nombre <span style="color:red">*</span></label>
-            <input name="nombre" id="f-res-nombre" placeholder="Nombre" required minlength="2">
-            <label>Apellido <span style="color:red">*</span></label>
-            <input name="apellido" id="f-res-apellido" placeholder="Apellido" required minlength="2">
-            <label>DNI <span style="color:red">*</span></label>
-            <input name="dni" id="f-res-dni" required pattern="[0-9]{7,8}" inputmode="numeric">
-            <label>Fecha de nacimiento</label>
-            <input type="date" name="fecha_nacimiento" id="f-res-fnac" max="<?= date('Y-m-d') ?>">
-            <label>Fecha de ingreso</label>
-            <input type="date" name="fecha_ingreso" id="f-res-fingreso" max="<?= date('Y-m-d') ?>">
-            <label><input type="checkbox" name="movilidad_autonoma" id="f-res-mov" style="width:auto" checked> Tiene movilidad autónoma</label>
-            <label><input type="checkbox" name="autorizado_foto" id="f-res-fotoauth" style="width:auto"> Autorizado para fotografías</label>
-            <label>Habitación asignada</label>
-            <select name="id_habitacion" id="f-res-hab" class="buscador" onchange="filtrarCamasModal('')">
-                <option value="">Sin asignar</option>
-                <?php foreach ($habitaciones_modal as $h): ?>
-                    <option value="<?= $h['id_habitacion'] ?>">Hab. <?= h($h['numero']) ?>, <?= h($h['sector']) ?> (<?= $h['estado'] ?>)</option>
-                <?php endforeach; ?>
-            </select>
-            <label>Cama asignada</label>
-            <select name="id_cama" id="f-res-cama" class="buscador">
-                <option value="">Sin asignar</option>
-                <?php foreach ($camas_modal as $c): ?>
-                    <option value="<?= $c['id_cama'] ?>" data-habitacion="<?= $c['id_habitacion'] ?>"><?= h($c['identificador']) ?> (<?= $c['estado'] ?>)</option>
-                <?php endforeach; ?>
-            </select>
-            <label>Nombre del familiar</label>
-            <input name="contacto_familiar" id="f-res-familiar" placeholder="Nombre y apellido del familiar">
-            <label>Teléfono del familiar</label>
-            <input name="telefono_familiar" id="f-res-telefam" type="tel">
-            <label>Observaciones médicas</label>
-            <textarea name="diagnostico" id="f-res-diag" rows="4" placeholder="Diagnósticos, alergias, condiciones especiales..."></textarea>
-            <div id="bloque-foto-actual" style="display:none;margin-bottom:8px">
-                <img id="f-res-foto-img" style="width:70px;height:70px;object-fit:cover;border-radius:8px;border:1px solid #ddd">
-                <span class="small" style="margin-left:8px">Foto actual</span>
-            </div>
-            <label id="label-foto">Foto del residente (opcional)</label>
-            <input type="file" name="foto" accept="image/jpeg,image/png,image/webp">
-            <br><br>
-            <button type="submit" class="btn">Guardar</button>
-            <button type="button" class="btn gray" onclick="cerrarModalResidente()">Cancelar</button>
-            <a class="btn gray" href="listar.php" id="btn-volver-residente" style="display:none">Volver al listado</a>
-        </form>
-    </div>
-</div>
-<script>
-const todasLasCamas_ver = <?= json_encode($camas_modal) ?>;
-function abrirModalResidente(id, datos) {
-    document.getElementById('modal-residente').style.display = 'flex';
-    document.getElementById('f-res-id').value        = id || '';
-    document.getElementById('f-res-nombre').value    = datos ? datos.nombre              : '';
-    document.getElementById('f-res-apellido').value  = datos ? (datos.apellido   || '')  : '';
-    document.getElementById('f-res-dni').value       = datos ? datos.dni                 : '';
-    document.getElementById('f-res-fnac').value      = datos ? (datos.fecha_nacimiento || '') : '';
-    document.getElementById('f-res-fingreso').value  = datos ? (datos.fecha_ingreso    || '') : '';
-    document.getElementById('f-res-mov').checked     = datos ? !!parseInt(datos.movilidad_autonoma) : true;
-    document.getElementById('f-res-fotoauth').checked= datos ? !!parseInt(datos.autorizado_foto)    : false;
-    document.getElementById('f-res-hab').value       = datos ? (datos.id_habitacion || '') : '';
-    document.getElementById('f-res-familiar').value  = datos ? (datos.contacto_familiar || '') : '';
-    document.getElementById('f-res-telefam').value   = datos ? (datos.telefono_familiar || '') : '';
-    document.getElementById('f-res-diag').value      = datos ? (datos.diagnostico       || '') : '';
-    document.getElementById('f-res-foto').value      = datos ? (datos.foto              || '') : '';
-    document.getElementById('f-res-estado').value    = datos ? (datos.estado            || 'activo') : 'activo';
-    const bloqueImg = document.getElementById('bloque-foto-actual');
-    const img       = document.getElementById('f-res-foto-img');
-    if (datos && datos.foto) {
-        img.src = '<?= BASE_URL ?>/' + datos.foto;
-        bloqueImg.style.display = 'block';
-    } else {
-        bloqueImg.style.display = 'none';
-    }
-    document.getElementById('modal-res-titulo').textContent = id ? 'Modificar residente' : 'Crear residente';
-    filtrarCamasModal(datos ? (datos.id_cama || '') : '');
-}
-function cerrarModalResidente() {
-    document.getElementById('modal-residente').style.display = 'none';
-}
-window.onclick = function(e) {
-    const m = document.getElementById('modal-residente');
-    if (e.target === m) cerrarModalResidente();
-}
-function filtrarCamasModal(camaSeleccionada) {
-    const habId   = document.getElementById('f-res-hab').value;
-    const selCama = document.getElementById('f-res-cama');
-    selCama.innerHTML = '<option value="">Sin asignar</option>';
-    todasLasCamas_ver.forEach(c => {
-        if (c.id_habitacion == habId || (camaSeleccionada && c.id_cama == camaSeleccionada)) {
-            const opt = document.createElement('option');
-            opt.value = c.id_cama;
-            opt.dataset.habitacion = c.id_habitacion;
-            opt.textContent = c.identificador + ' (' + c.estado + ')';
-            if (camaSeleccionada && c.id_cama == camaSeleccionada) opt.selected = true;
-            selCama.appendChild(opt);
-        }
-    });
-    if (window.refrescarBuscador) refrescarBuscador('id_cama');
-}
-document.getElementById('f-res-hab').addEventListener('change', function() { filtrarCamasModal(''); });
-</script>
-<?php endif; ?>
-
 <?php
     include '../config/footer.php';
     exit;
@@ -413,6 +319,28 @@ $rows = $pdo->query("SELECT r.*, h.numero habitacion, h.sector
 ?>
 
 <h1>Residentes</h1>
+
+<?php if (isset($_GET['cb03_warn']) && es_admin()):
+    $id_warn = (int)$_GET['cb03_warn'];
+    $res_warn = $pdo->prepare("SELECT nombre, apellido FROM residentes WHERE id_residente=?");
+    $res_warn->execute([$id_warn]);
+    $rw = $res_warn->fetch();
+?>
+<div style="background:#fff3cd;border-left:5px solid #e67e22;padding:16px 20px;border-radius:8px;margin-bottom:20px">
+    <b style="color:#856404;font-size:15px">Advertencia: medicación pendiente en el turno actual</b><br>
+    <p style="margin:8px 0;color:#555;font-size:14px">
+        <b><?= htmlspecialchars($rw['nombre'] . ' ' . $rw['apellido']) ?></b> tiene medicaciones
+        en estado <b>Pendiente</b> en el turno de hoy. Si das de baja al residente ahora, esas
+        medicaciones quedarán sin registrar.
+    </p>
+    <div style="display:flex;gap:10px;margin-top:12px">
+        <a href="?accion=baja&id=<?= $id_warn ?>&confirmar_baja=1" class="btn red">
+            Dar de baja de todas formas
+        </a>
+        <a href="listar.php" class="btn gray">Cancelar</a>
+    </div>
+</div>
+<?php endif; ?>
 
 <?php if (isset($_GET['ver_bajas']) && es_admin()): ?>
     <?php
@@ -495,6 +423,12 @@ $rows = $pdo->query("SELECT r.*, h.numero habitacion, h.sector
             <td><span class="pill estado-<?= $r['estado'] ?>"><?= ['activo'=>'Activo','pausado'=>'Servicio suspendido','baja'=>'Baja'][$r['estado']] ?? $r['estado'] ?></span></td>
             <td>
                 <a class="btn blue" href="?ver=<?= $r['id_residente'] ?>">Ver ficha</a>
+                <?php if (es_admin() && $r['token_visita']): ?>
+                    <button class="btn gray" style="font-size:12px"
+                        onclick="copiarLink('<?= BASE_URL ?>/visitas/solicitar.php?token=<?= $r['token_visita'] ?>', this)">
+Link visitas
+                    </button>
+                <?php endif; ?>
                 <?php if (es_admin()): ?>
                     <button class="btn" onclick="abrirModalResidente(<?= $r['id_residente'] ?>, <?= htmlspecialchars(json_encode($r)) ?>)">Modificar</button>
                     <?php if ($r['estado'] === 'activo'): ?>
@@ -529,7 +463,13 @@ $rows = $pdo->query("SELECT r.*, h.numero habitacion, h.sector
 </table>
 
 <?php
-$habitaciones_modal = $pdo->query("SELECT * FROM habitaciones WHERE estado='disponible' ORDER BY numero")->fetchAll();
+$habitaciones_modal = $pdo->query("
+    SELECT DISTINCT h.*
+    FROM habitaciones h
+    JOIN camas c ON c.id_habitacion = h.id_habitacion
+    WHERE c.estado = 'disponible'
+    ORDER BY h.numero
+")->fetchAll();
 $camas_modal        = $pdo->query("SELECT * FROM camas WHERE estado='disponible' ORDER BY id_habitacion, identificador")->fetchAll();
 ?>
 
@@ -590,18 +530,19 @@ $camas_modal        = $pdo->query("SELECT * FROM camas WHERE estado='disponible'
                     <label style="font-size:13px;font-weight:600">Habitación asignada</label>
                     <select name="id_habitacion" id="f-res-hab" class="buscador" onchange="filtrarCamasModal()" style="width:100%;box-sizing:border-box">
                         <option value="">Sin asignar</option>
-                        <?php foreach ($habitaciones_modal as $h): ?>
-                            <option value="<?= $h['id_habitacion'] ?>">Hab. <?= h($h['numero']) ?>, <?= h($h['sector']) ?> (<?= $h['estado'] ?>)</option>
+                        <?php foreach ($habitaciones_modal as $h):
+                            $camas_disp = array_filter($camas_modal, fn($c) => $c['id_habitacion'] == $h['id_habitacion']);
+                        ?>
+                            <option value="<?= $h['id_habitacion'] ?>">
+                                Hab. <?= h($h['numero']) ?>, <?= h($h['sector']) ?> (<?= count($camas_disp) ?> cama<?= count($camas_disp) != 1 ? 's' : '' ?> libre<?= count($camas_disp) != 1 ? 's' : '' ?>)
+                            </option>
                         <?php endforeach; ?>
                     </select>
                 </div>
                 <div>
                     <label style="font-size:13px;font-weight:600">Cama asignada</label>
                     <select name="id_cama" id="f-res-cama" class="buscador" style="width:100%;box-sizing:border-box">
-                        <option value="">Sin asignar</option>
-                        <?php foreach ($camas_modal as $c): ?>
-                            <option value="<?= $c['id_cama'] ?>" data-habitacion="<?= $c['id_habitacion'] ?>"><?= h($c['identificador']) ?> (<?= $c['estado'] ?>)</option>
-                        <?php endforeach; ?>
+                        <option value="">Seleccioná primero una habitación</option>
                     </select>
                 </div>
             </div>
@@ -644,7 +585,7 @@ $camas_modal        = $pdo->query("SELECT * FROM camas WHERE estado='disponible'
 
 <script>
 const todasLasCamas = <?= json_encode(
-    $pdo->query("SELECT id_cama, id_habitacion, identificador, estado FROM camas ORDER BY id_habitacion, identificador")->fetchAll()
+    $pdo->query("SELECT id_cama, id_habitacion, identificador, estado FROM camas WHERE estado='disponible' ORDER BY id_habitacion, identificador")->fetchAll()
 ) ?>;
 
 function abrirModalResidente(id, datos) {
@@ -706,16 +647,28 @@ function filtrarCamasModal(camaSeleccionada) {
     const selCama = document.getElementById('f-res-cama');
 
     selCama.innerHTML = '<option value="">Sin asignar</option>';
-    todasLasCamas.forEach(c => {
-        if (c.id_habitacion == habId || (camaSeleccionada && c.id_cama == camaSeleccionada)) {
+
+    if (!habId) {
+        selCama.innerHTML = '<option value="">Seleccioná primero una habitación</option>';
+        if (window.refrescarBuscador) refrescarBuscador('id_cama');
+        return;
+    }
+
+    const camasFiltradas = todasLasCamas.filter(c => c.id_habitacion == habId);
+
+    if (camasFiltradas.length === 0) {
+        selCama.innerHTML = '<option value="">No hay camas disponibles</option>';
+    } else {
+        camasFiltradas.forEach(c => {
             const opt = document.createElement('option');
-            opt.value            = c.id_cama;
+            opt.value              = c.id_cama;
             opt.dataset.habitacion = c.id_habitacion;
-            opt.textContent      = c.identificador + ' (' + c.estado + ')';
+            opt.textContent        = 'Cama ' + c.identificador;
             if (camaSeleccionada && c.id_cama == camaSeleccionada) opt.selected = true;
             selCama.appendChild(opt);
-        }
-    });
+        });
+    }
+
     if (window.refrescarBuscador) refrescarBuscador('id_cama');
 }
 
@@ -784,5 +737,26 @@ window.addEventListener('click', function(e) {
 });
 </script>
 
+<script>
+function copiarLink(url, btn) {
+    navigator.clipboard.writeText(url).then(function() {
+        var orig = btn.textContent;
+        btn.textContent = 'Copiado!';
+        btn.style.background = '#27ae60';
+        btn.style.color = '#fff';
+        setTimeout(function() {
+            btn.textContent = orig;
+            btn.style.background = '';
+            btn.style.color = '';
+        }, 2000);
+    });
+}
+</script>
 <?php include '../config/footer.php'; ?>
+
+
+
+
+
+
 

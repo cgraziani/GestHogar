@@ -6,6 +6,16 @@ require_once '../config/db.php';
 if (isset($_GET['estado']) && isset($_GET['id'])) {
     $estado = $_GET['estado'];
     if (in_array($estado, ['disponible', 'mantenimiento', 'ocupada'])) {
+
+        if (in_array($estado, ['disponible', 'mantenimiento'])) {
+            $camas_ocupadas = $pdo->prepare("SELECT COUNT(*) FROM camas WHERE id_habitacion=? AND estado='ocupada'");
+            $camas_ocupadas->execute([$_GET['id']]);
+            if ($camas_ocupadas->fetchColumn() > 0) {
+                header('Location: listar.php?toast=No+se+puede+cambiar+el+estado%3A+la+habitaci%C3%B3n+tiene+camas+ocupadas.+Dar%C3%A1+de+baja+al+residente+primero.&tipo=error');
+                exit;
+            }
+        }
+
         $pdo->prepare('UPDATE habitaciones SET estado=?, updated_by=? WHERE id_habitacion=?')
             ->execute([$estado, uid(), $_GET['id']]);
         $labels = ['disponible' => 'disponible', 'mantenimiento' => 'en+mantenimiento', 'ocupada' => 'ocupada'];
@@ -15,6 +25,12 @@ if (isset($_GET['estado']) && isset($_GET['id'])) {
 }
 
 if (isset($_GET['eliminar'])) {
+    $camas_ocupadas = $pdo->prepare("SELECT COUNT(*) FROM camas WHERE id_habitacion=? AND estado='ocupada'");
+    $camas_ocupadas->execute([$_GET['eliminar']]);
+    if ($camas_ocupadas->fetchColumn() > 0) {
+        header('Location: listar.php?toast=No+se+puede+cambiar+el+estado%3A+la+habitaci%C3%B3n+tiene+camas+ocupadas.&tipo=error');
+        exit;
+    }
     $pdo->prepare("UPDATE habitaciones SET estado='mantenimiento', updated_by=? WHERE id_habitacion=?")
         ->execute([uid(), $_GET['eliminar']]);
     header('Location: listar.php?toast=Habitaci%C3%B3n+puesta+en+mantenimiento&tipo=warn');
@@ -129,20 +145,35 @@ foreach ($camas_all as $c) {
                 <button class="btn" onclick="abrirModal(<?= $r['id_habitacion'] ?>, <?= htmlspecialchars(json_encode($r)) ?>)">
                     Modificar
                 </button>
-                <?php if ($r['estado'] === 'disponible'): ?>
-                    <a class="btn orange"
-                       href="?estado=mantenimiento&id=<?= $r['id_habitacion'] ?>"
-                       onclick="return confirm('¿Marcar la habitación <?= htmlspecialchars($r['numero']) ?> como en mantenimiento?')">
-                       Mantenimiento
-                    </a>
-                <?php elseif ($r['estado'] === 'mantenimiento'): ?>
-                    <a class="btn green" href="?estado=disponible&id=<?= $r['id_habitacion'] ?>">
-                       Marcar disponible
-                    </a>
-                <?php endif; ?>
+               
+                
                 <button class="btn gray" onclick="abrirModalCama(<?= $r['id_habitacion'] ?>, '<?= htmlspecialchars($r['numero']) ?>')">
                     + Cama
                 </button>
+
+                 <?php if ($r['estado'] === 'disponible'): ?>
+                    <a class="btn orange"
+                       href="?estado=mantenimiento&id=<?= $r['id_habitacion'] ?>"
+                       onclick="return confirmarLink(this,'¿Marcar la habitación <?= htmlspecialchars($r['numero']) ?> como en mantenimiento?','Confirmar','orange')">
+                       Mantenimiento
+                    </a>
+                <?php elseif ($r['estado'] === 'mantenimiento'): ?>
+                    <a class="btn green" href="?estado=disponible&id=<?= $r['id_habitacion'] ?>"
+                       onclick="return confirmarLink(this,'¿Marcar la habitación <?= htmlspecialchars($r['numero']) ?> como disponible?','Confirmar','green')">
+                       Marcar disponible
+                    </a>
+                <?php elseif ($r['estado'] === 'ocupada'): ?>
+                    <?php if ($r['camas_disponibles'] == $r['total_camas']): ?>
+                        <a class="btn green" href="?estado=disponible&id=<?= $r['id_habitacion'] ?>"
+                           onclick="return confirmarLink(this,'¿Marcar la habitación <?= htmlspecialchars($r['numero']) ?> como disponible?','Confirmar','green')">
+                           Marcar disponible
+                        </a>
+                    <?php else: ?>
+                        <span style="font-size:12px;color:#888;font-style:italic">
+                            Dar de baja al residente primero
+                        </span>
+                    <?php endif; ?>
+                    <?php endif; ?>
             </td>
         </tr>
     <?php endforeach; ?>

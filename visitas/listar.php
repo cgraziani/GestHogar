@@ -14,14 +14,37 @@ function volver_visitas($mensaje, $tipo = 'ok') {
 function estado_visita_class($e) {
     if ($e === 'en_curso')   return 'estado-ok';
     if ($e === 'agendada')   return 'estado-pendiente';
-    if ($e === 'cancelada')  return 'estado-problema';
+    if ($e === 'solicitada') return 'estado-alerta';
+    if ($e === 'cancelada' || $e === 'rechazada') return 'estado-problema';
     return 'estado-alerta';
 }
 
 function estado_visita_label($e) {
-    $map = ['agendada' => 'Agendada', 'en_curso' => 'En curso',
-            'finalizada' => 'Finalizada', 'cancelada' => 'Cancelada'];
+    $map = [
+        'solicitada' => 'Solicitada',
+        'agendada'   => 'Agendada',
+        'en_curso'   => 'En curso',
+        'finalizada' => 'Finalizada',
+        'cancelada'  => 'Cancelada',
+        'rechazada'  => 'Rechazada',
+    ];
     return $map[$e] ?? $e;
+}
+
+if (isset($_GET['aprobar'])) {
+    $fecha = trim($_GET['fecha'] ?? '');
+    if (!$fecha) $fecha = date('Y-m-d H:i:s', strtotime('+1 day'));
+    $pdo->prepare("UPDATE visitas SET estado='agendada', hora_ingreso=?, aprobado_por=?
+                   WHERE id_visita=? AND estado='solicitada'")
+        ->execute([$fecha, uid(), (int)$_GET['aprobar']]);
+    volver_visitas('Visita aprobada y agendada');
+}
+
+if (isset($_GET['rechazar'])) {
+    $pdo->prepare("UPDATE visitas SET estado='rechazada', motivo_rechazo=?
+                   WHERE id_visita=? AND estado='solicitada'")
+        ->execute([trim($_GET['motivo'] ?? '') ?: 'Sin motivo especificado', (int)$_GET['rechazar']]);
+    volver_visitas('Solicitud rechazada', 'warn');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['nueva_visita'])) {
@@ -79,10 +102,11 @@ $visitas = $pdo->query("SELECT v.*, r.nombre rn, r.apellido ra,
     LEFT JOIN usuarios u  ON u.id_usuario=v.id_usuario
     LEFT JOIN usuarios uc ON uc.id_usuario=v.cerrado_por
     WHERE 1=1 $whereRes
-    ORDER BY COALESCE(v.fecha_programada, v.hora_ingreso) DESC")->fetchAll();
+    ORDER BY COALESCE(v.hora_ingreso, v.created_at) DESC")->fetchAll();
 
-$proximas = array_filter($visitas, function ($v) {
-    return $v['estado'] === 'agendada' && $v['fecha_programada'] >= date('Y-m-d 00:00:00');
+$solicitudes = array_filter($visitas, fn($v) => $v['estado'] === 'solicitada');
+$proximas    = array_filter($visitas, function ($v) {
+    return $v['estado'] === 'agendada' && $v['hora_ingreso'] >= date('Y-m-d 00:00:00');
 });
 $en_curso = array_filter($visitas, fn($v) => $v['estado'] === 'en_curso');
 
@@ -93,7 +117,52 @@ if ($id_residente > 0) {
 }
 ?>
 
-<h1>Visitas de familiares</h1>
+<h1>Visitas de familiares
+    <?php if (count($solicitudes) > 0): ?>
+        <span style="background:#e67e22;color:#fff;font-size:13px;padding:3px 10px;border-radius:12px;margin-left:10px;vertical-align:middle">
+            <?= count($solicitudes) ?> solicitud<?= count($solicitudes) > 1 ? 'es' : '' ?> pendiente<?= count($solicitudes) > 1 ? 's' : '' ?>
+        </span>
+    <?php endif; ?>
+</h1>
+
+<?php if (!empty($solicitudes)): ?>
+<div style="background:#fff3cd;border-left:5px solid #e67e22;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+    <b style="color:#e67e22;font-size:15px">Solicitudes de visita pendientes de aprobación</b>
+    <?php foreach ($solicitudes as $s): ?>
+    <div style="background:#fff;border-radius:8px;padding:14px 16px;margin-bottom:10px;border:1px solid #f0c36d;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+            <b><?= htmlspecialchars($s['nombre_visitante'] . ' ' . ($s['apellido_visitante'] ?? '')) ?></b>
+            <span style="color:#888;font-size:12px;margin-left:6px"><?= htmlspecialchars($s['parentesco']) ?></span><br>
+            <span style="font-size:13px">Residente: <b><?= htmlspecialchars($s['rn'] . ' ' . $s['ra']) ?></b></span><br>
+            <?php if ($s['telefono_visitante']): ?>
+                <span style="font-size:12px;color:#555"><?= htmlspecialchars($s['telefono_visitante']) ?></span>
+            <?php endif; ?>
+            <?php if ($s['observaciones']): ?>
+                <span style="font-size:12px;color:#555;display:block;margin-top:2px"><?= htmlspecialchars($s['observaciones']) ?></span>
+            <?php endif; ?>
+            <span style="font-size:11px;color:#aaa;display:block;margin-top:4px">
+                Solicitado: <?= date('d/m/Y H:i', strtotime($s['created_at'])) ?>
+                <?php if ($s['hora_ingreso']): ?>
+                    · Prefiere: <?= date('d/m/Y H:i', strtotime($s['hora_ingreso'])) ?>
+                <?php endif; ?>
+            </span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a class="btn green"
+               href="?aprobar=<?= $s['id_visita'] ?>&fecha=<?= urlencode($s['hora_ingreso'] ?? date('Y-m-d H:i:s', strtotime('+1 day'))) ?>"
+               onclick="return confirmarLink(this,'¿Aprobar la visita de <?= htmlspecialchars($s['nombre_visitante']) ?>?','Aprobar','green')">
+Aprobar
+            </a>
+            <a class="btn red"
+               href="?rechazar=<?= $s['id_visita'] ?>&motivo=No+disponible"
+               onclick="return confirmarLink(this,'¿Rechazar esta solicitud?','Rechazar','red')">
+Rechazar
+            </a>
+        </div>
+    </div>
+    <?php endforeach; ?>
+</div>
+<?php endif; ?>
 
 <div class="card">
     <h2>Filtrar por residente</h2>
@@ -259,3 +328,4 @@ document.getElementById('modal-visita').addEventListener('click', function(e){
 </script>
 
 <?php include '../config/footer.php'; ?>
+

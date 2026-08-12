@@ -10,7 +10,11 @@ $total_cuidadoras = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE rol IN ('cu
 $total_planes     = $pdo->query("SELECT COUNT(*) FROM medicacion_residente WHERE estado='activo'")->fetchColumn();
 $total_visitas_hoy = $pdo->query("SELECT COUNT(*) FROM visitas
     WHERE estado IN('agendada','en_curso')
-    AND DATE(COALESCE(fecha_programada, hora_ingreso)) = CURDATE()")->fetchColumn();
+    AND DATE(COALESCE(hora_ingreso, created_at)) = CURDATE()")->fetchColumn();
+
+$traspasos_pendientes = $pdo->query("SELECT COUNT(*) FROM traspaso_turno WHERE estado='pendiente'")->fetchColumn();
+
+$incidentes_graves = $pdo->query("SELECT COUNT(*) FROM incidentes WHERE gravedad='grave' AND estado='pendiente'")->fetchColumn();
 
 $hoy    = date('Y-m-d');
 $turnos = $pdo->prepare("SELECT tp.*,u.nombre cuidadora,u.color,u.rol FROM turnos_programados tp JOIN usuarios u ON u.id_usuario=tp.id_cuidadora_usuario WHERE tp.estado='activo' AND tp.fecha>=? ORDER BY tp.fecha,tp.hora_inicio LIMIT 20");
@@ -19,6 +23,27 @@ $turnos = $turnos->fetchAll();
 ?>
 
 <h1>Panel principal</h1>
+
+<?php if (es_admin() && ($traspasos_pendientes > 0 || $incidentes_graves > 0)): ?>
+<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+    <?php if ($traspasos_pendientes > 0): ?>
+    <div style="background:#fff3cd;border-left:5px solid #e67e22;padding:12px 18px;border-radius:8px;display:flex;align-items:center;gap:12px">
+        <div>
+            <b style="color:#856404"><?= $traspasos_pendientes ?> traspaso<?= $traspasos_pendientes > 1 ? 's' : '' ?> de turno pendiente<?= $traspasos_pendientes > 1 ? 's' : '' ?> de confirmación</b>
+            <a href="turnos/listar.php" style="margin-left:12px;font-size:13px;color:#e67e22;font-weight:600">Ver traspasos →</a>
+        </div>
+    </div>
+    <?php endif; ?>
+    <?php if ($incidentes_graves > 0): ?>
+    <div style="background:#fdecea;border-left:5px solid #c0392b;padding:12px 18px;border-radius:8px;display:flex;align-items:center;gap:12px">
+        <div>
+            <b style="color:#c0392b"><?= $incidentes_graves ?> incidente<?= $incidentes_graves > 1 ? 's' : '' ?> grave<?= $incidentes_graves > 1 ? 's' : '' ?> sin revisar</b>
+            <a href="incidentes/listar.php" style="margin-left:12px;font-size:13px;color:#c0392b;font-weight:600">Ver incidentes →</a>
+        </div>
+    </div>
+    <?php endif; ?>
+</div>
+<?php endif; ?>
 
 <?php if (es_admin()): ?>
 

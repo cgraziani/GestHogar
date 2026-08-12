@@ -1,6 +1,6 @@
 <?php
-$nombreBase = 'gesthogar_db';
-$archivoSql = __DIR__ . '/database/gesthogar_db.sql';
+$nombreBase = 'gesthogar';
+$archivoSql = __DIR__ . '/database/gesthogar.sql';
 $reemplazar = isset($_GET['reemplazar']) && $_GET['reemplazar'] === '1';
 
 function dividirSentencias($sql)

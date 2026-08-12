@@ -1,6 +1,6 @@
 <?php
 $host = 'localhost';
-$db = 'gesthogar_db';
+$db = 'gesthogar';
 $user = 'root';
 $pass = '';
 try {

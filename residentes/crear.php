@@ -45,6 +45,26 @@ if (!empty($_FILES['foto']['name'])) {
 $habitacion = $_POST['id_habitacion'] ?: null;
 $cama       = $_POST['id_cama']       ?: null;
 
+if ($cama) {
+    $cama_check = $pdo->prepare("SELECT estado FROM camas WHERE id_cama=?");
+    $cama_check->execute([$cama]);
+    $cama_data = $cama_check->fetch();
+
+    $cama_anterior = null;
+    if ($_POST['id']) {
+        $ant_q = $pdo->prepare("SELECT id_cama FROM residentes WHERE id_residente=?");
+        $ant_q->execute([$_POST['id']]);
+        $cama_anterior = $ant_q->fetchColumn();
+    }
+
+    if ($cama_data && $cama_data['estado'] !== 'disponible' && $cama != $cama_anterior) {
+        $_SESSION['error_form'] = 'La cama seleccionada ya está ocupada. Elegí una cama disponible.';
+        $_SESSION['form_data']  = $_POST;
+        header('Location: listar.php' . ($_POST['id'] ? '?abrir_modal=' . $_POST['id'] : '?abrir_modal=nuevo'));
+        exit;
+    }
+}
+
 try {
     if ($_POST['id']) {
         $anterior = $pdo->prepare('SELECT id_cama, id_habitacion FROM residentes WHERE id_residente=?');
@@ -88,6 +108,11 @@ try {
                 'activo', uid()
             ]);
         $nuevo_id = $pdo->lastInsertId();
+
+        $token = md5($nuevo_id . 'gesthogar' . uniqid('', true));
+        $pdo->prepare('UPDATE residentes SET token_visita=? WHERE id_residente=?')
+            ->execute([$token, $nuevo_id]);
+
         $pdo->prepare('INSERT INTO historial_estados(entidad,id_registro,estado_anterior,estado_nuevo,cambiado_por) VALUES(?,?,?,?,?)')
             ->execute(['residente', $nuevo_id, '', 'activo', uid()]);
         header('Location: listar.php?toast=Residente+creado+correctamente&tipo=ok');
