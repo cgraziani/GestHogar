@@ -1,8 +1,4 @@
 <?php
-// ============================================================
-// REPORTE DE VISITAS
-// Historial de ingresos y egresos de familiares.
-// ============================================================
 require_once 'comun.php';
 abrir_pagina_reporte();
 
@@ -11,8 +7,6 @@ $where = '';
 if ($id_residente)         $where .= ' AND v.id_residente = ' . $id_residente;
 if ($filtro_estado !== '') $where .= ' AND v.estado = ' . $pdo->quote($filtro_estado);
 
-// Una visita se ubica en el tiempo por su ingreso real; si todavía no
-// ingresó, por la fecha para la que estaba agendada.
 $sth = $pdo->prepare("SELECT v.*, r.nombre rn, r.apellido ra,
         u.nombre registro_por, uc.nombre cerro_por
     FROM visitas v
@@ -41,7 +35,7 @@ foreach ($datos as $d) {
     if ($d['estado'] === 'en_curso')   $en_curso++;
     if ($d['estado'] === 'finalizada') $finalizadas++;
 
-    $permanencia = '—';
+    $permanencia = '';
     if ($d['hora_ingreso'] && $d['hora_egreso']) {
         $min = (strtotime($d['hora_egreso']) - strtotime($d['hora_ingreso'])) / 60;
         $minutos_total += $min; $con_permanencia++;
@@ -54,12 +48,12 @@ foreach ($datos as $d) {
         trim($d['nombre_visitante'] . ' ' . ($d['apellido_visitante'] ?? '')),
         $d['parentesco'],
         $d['rn'] . ' ' . $d['ra'],
-        $d['telefono_visitante'] ?: '—',
+        $d['telefono_visitante'] ?: '',
         fecha_hora($d['hora_ingreso']),
         fecha_hora($d['hora_egreso']),
         $permanencia,
         pill($txt, $cls),
-        $d['observaciones'] ?: '—',
+        $d['observaciones'] ?: '',
     ];
 }
 
@@ -68,19 +62,18 @@ $resumen = [
     ['Visitas', count($datos), 'En el período elegido'],
     ['Finalizadas', $finalizadas, 'Con ingreso y egreso registrados'],
     ['En curso', $en_curso, 'Familiares dentro del hogar'],
-    ['Permanencia media', $promedio ? floor($promedio / 60) . 'h ' . ($promedio % 60) . 'm' : '—', 'Promedio por visita'],
+    ['Permanencia media', $promedio ? floor($promedio / 60) . 'h ' . ($promedio % 60) . 'm' : '', 'Promedio por visita'],
 ];
 
 $sel = function ($v) use ($filtro_estado) { return $filtro_estado === $v ? 'selected' : ''; };
 $opts = '';
 foreach ($estados_pill as $k => $v) $opts .= '<option value="' . $k . '" ' . $sel($k) . '>' . $v[0] . '</option>';
 $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Estado</label>'
-       . '<select name="estado"><option value="">— Todos —</option>' . $opts . '</select></div>';
+       . '<select name="estado"><option value="">Todos</option>' . $opts . '</select></div>';
 
 salida_reporte('Reporte de visitas', 'visitas', $cols, $filas);
 
 echo '<h1>Reporte de visitas</h1>';
-echo '<p class="small">Ingresos y egresos de familiares, con parentesco y tiempo de permanencia.</p>';
 barra_filtros(['residente' => true, 'extra' => $extra]);
 resumen_reporte($resumen);
 tabla_reporte($cols, $filas);

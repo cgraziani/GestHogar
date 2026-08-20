@@ -1,8 +1,4 @@
 <?php
-// ============================================================
-// REPORTE DE MEDICACIÓN
-// Qué se administró, en qué horario y, si no se dio, por qué.
-// ============================================================
 require_once 'comun.php';
 abrir_pagina_reporte();
 
@@ -40,12 +36,12 @@ foreach ($datos as $d) {
         fecha_hora($d['fecha_hora']),
         $d['rn'] . ' ' . $d['ra'],
         trim($d['med'] . ' ' . $d['presentacion']),
-        $d['dosis'] ?: '—',
-        $d['horario_pautado'] ?: '—',
-        $d['diagnostico'] ?: '—',
+        $d['dosis'] ?: '',
+        $d['horario_pautado'] ?: '',
+        $d['diagnostico'] ?: '',
         pill_estado_medicacion($d['estado_adm']),
-        $d['observaciones'] ?: '—',
-        $d['cuidadora'] ?: '—',
+        $d['observaciones'] ?: '',
+        $d['cuidadora'] ?: '',
     ];
 }
 
@@ -60,11 +56,10 @@ $resumen = [
     ['Adhesión', $adhesion . '%', 'Administradas sobre el total'],
 ];
 
-// Filtro propio de este reporte
 $sel = function ($v) use ($filtro_estado) { return $filtro_estado === $v ? 'selected' : ''; };
 $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Estado</label>'
        . '<select name="estado">'
-       . '<option value="">— Todos —</option>'
+       . '<option value="">Todos</option>'
        . '<option value="omisiones" ' . $sel('omisiones') . '>Solo omisiones</option>'
        . '<option value="administrado" ' . $sel('administrado') . '>Administradas</option>'
        . '<option value="no_pudo" ' . $sel('no_pudo') . '>No se pudo</option>'
@@ -74,7 +69,6 @@ $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Estad
 salida_reporte('Reporte de medicación', 'medicacion', $cols, $filas);
 
 echo '<h1>Reporte de medicación</h1>';
-echo '<p class="small">Trazabilidad de cada administración: qué se dio, cuándo, y el motivo de cada omisión.</p>';
 barra_filtros(['residente' => true, 'extra' => $extra]);
 resumen_reporte($resumen);
 tabla_reporte($cols, $filas);

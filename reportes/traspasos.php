@@ -1,9 +1,4 @@
 <?php
-// ============================================================
-// REPORTE DE TRASPASO DE TURNO
-// Novedades que deja cada turno al cerrar, para que la siguiente
-// cuidadora y Carla tengan continuidad sin depender de WhatsApp.
-// ============================================================
 require_once 'comun.php';
 abrir_pagina_reporte();
 
@@ -28,9 +23,7 @@ $pendientes = 0;
 foreach ($datos as $d) {
     if ($d['estado'] === 'pendiente') $pendientes++;
 
-    // Solo tiene sentido si el cierre es posterior a la apertura; en los
-    // datos hay traspasos cargados con las horas invertidas.
-    $duracion = '—';
+    $duracion = '';
     if ($d['fecha_apertura'] && $d['fecha_cierre']) {
         $min = (strtotime($d['fecha_cierre']) - strtotime($d['fecha_apertura'])) / 60;
         $duracion = $min >= 0
@@ -43,9 +36,9 @@ foreach ($datos as $d) {
                              : ['texto' => 'Sin registrar', 'html' => '<span class="pill pill-neutro">Sin registrar</span>'],
         $d['fecha_cierre'] ? fecha_hora($d['fecha_cierre'])
                            : ['texto' => 'Sin cerrar', 'html' => '<span class="pill pill-aviso">Sin cerrar</span>'],
-        trim(($d['saliente'] ?? '') . ' ' . ($d['saliente_ape'] ?? '')) ?: '—',
-        trim(($d['entrante'] ?? '') . ' ' . ($d['entrante_ape'] ?? '')) ?: '—',
-        $d['novedades'] ?: '— sin novedades registradas —',
+        trim(($d['saliente'] ?? '') . ' ' . ($d['saliente_ape'] ?? '')) ?: '',
+        trim(($d['entrante'] ?? '') . ' ' . ($d['entrante_ape'] ?? '')) ?: '',
+        $d['novedades'] ?: 'Sin novedades registradas',
         $duracion,
         $d['estado'] === 'cerrado' ? pill('Cerrado', 'pill-ok') : pill('Pendiente', 'pill-aviso'),
     ];
@@ -59,7 +52,7 @@ $resumen = [
 
 $sel = function ($v) use ($filtro_estado) { return $filtro_estado === $v ? 'selected' : ''; };
 $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Estado</label>'
-       . '<select name="estado"><option value="">— Todos —</option>'
+       . '<select name="estado"><option value="">Todos</option>'
        . '<option value="pendiente" ' . $sel('pendiente') . '>Sin cerrar</option>'
        . '<option value="cerrado" ' . $sel('cerrado') . '>Cerrados</option>'
        . '</select></div>';
@@ -67,7 +60,6 @@ $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Estad
 salida_reporte('Reporte de traspaso de turno', 'traspasos', $cols, $filas);
 
 echo '<h1>Reporte de traspaso de turno</h1>';
-echo '<p class="small">Novedades registradas al cierre de cada turno, con quién entrega y quién recibe.</p>';
 barra_filtros(['residente' => false, 'extra' => $extra]);
 resumen_reporte($resumen);
 tabla_reporte($cols, $filas);

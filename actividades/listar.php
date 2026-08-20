@@ -83,7 +83,7 @@ $actividades = $pdo->query("
     LEFT JOIN usuarios u ON u.id_usuario = a.id_usuario
     LEFT JOIN actividad_residentes ar ON ar.id_actividad = a.id_actividad
     LEFT JOIN residentes r ON r.id_residente = ar.id_residente
-    WHERE a.eliminado = 0 AND a.estado = 'activo'
+    WHERE a.estado = 'activo'
     GROUP BY a.id_actividad
     ORDER BY a.fecha DESC
 ")->fetchAll();

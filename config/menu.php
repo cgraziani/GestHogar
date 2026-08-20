@@ -88,6 +88,8 @@ $iniciales = mb_strtoupper(mb_substr($partes[0], 0, 1)) . (isset($partes[1]) ? m
         <?php endif; ?>
         <?php menu_link('/turnos/listar.php', 'Novedades'); ?>
         <?php if (es_admin()): ?>
+            <?php menu_link('/reportes/dashboard.php', 'Estado del hogar'); ?>
+            <?php menu_link('/reportes/index.php', 'Reportes'); ?>
             <?php menu_link('/papelera/index.php', 'Papelera'); ?>
         <?php endif; ?>
     </aside>

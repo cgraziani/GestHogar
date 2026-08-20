@@ -1,22 +1,9 @@
 <?php
-// ============================================================
-// REPORTE CONSOLIDADO POR RESIDENTE
-// Un solo documento con medicación, incidentes y controles clínicos
-// en un rango de fechas. Es el que Carla lleva a las reuniones con
-// médicos o familiares.
-//
-// Se genera como PDF desde el propio navegador: la vista de impresión
-// abre el diálogo de impresión y ahí se elige "Guardar como PDF".
-// Así no hace falta sumar ninguna librería al proyecto.
-// ============================================================
 require_once 'comun.php';
 abrir_pagina_reporte();
 
-// ── Sin residente elegido: pantalla de selección ────────────
 if (!$id_residente) {
     echo '<h1>Reporte consolidado por residente</h1>';
-    echo '<p class="small">Reúne medicación, incidentes y controles clínicos de un residente '
-       . 'en un solo documento, listo para imprimir o guardar como PDF.</p>';
     barra_filtros_consolidado();
     echo '<div class="card" style="text-align:center;color:var(--text-muted)">'
        . 'Elegí un residente arriba para generar su reporte.</div>';
@@ -32,7 +19,6 @@ if (!$res) {
     exit;
 }
 
-// ── Datos del residente ─────────────────────────────────────
 $sth = $pdo->prepare("SELECT r.*, h.numero AS habitacion, h.sector
     FROM residentes r
     LEFT JOIN habitaciones h ON h.id_habitacion = r.id_habitacion
@@ -40,7 +26,6 @@ $sth = $pdo->prepare("SELECT r.*, h.numero AS habitacion, h.sector
 $sth->execute([$id_residente]);
 $ficha = $sth->fetch();
 
-// ── Bloque 1: medicación ────────────────────────────────────
 $sth = $pdo->prepare("SELECT am.fecha_hora, am.estado_adm, am.observaciones,
         m.nombre med, m.presentacion, mr.dosis, mr.horario, u.nombre cuidadora
     FROM administracion_medicacion am
@@ -58,15 +43,14 @@ foreach ($med as $d) {
     $filas_med[] = [
         fecha_hora($d['fecha_hora']),
         trim($d['med'] . ' ' . $d['presentacion']),
-        $d['dosis'] ?: '—',
-        $d['horario'] ?: '—',
+        $d['dosis'] ?: '',
+        $d['horario'] ?: '',
         pill_estado_medicacion($d['estado_adm']),
-        $d['observaciones'] ?: '—',
-        $d['cuidadora'] ?: '—',
+        $d['observaciones'] ?: '',
+        $d['cuidadora'] ?: '',
     ];
 }
 
-// ── Bloque 2: incidentes ────────────────────────────────────
 $sth = $pdo->prepare("SELECT i.*, u.nombre reporto
     FROM incidentes i
     LEFT JOIN usuarios u ON u.id_usuario = i.id_usuario
@@ -81,15 +65,14 @@ foreach ($inc as $d) {
     $filas_inc[] = [
         fecha_hora($d['fecha_hora']),
         pill_gravedad($d['gravedad']),
-        $d['descripcion'] ?: '—',
-        $d['acciones_tomadas'] ?: '—',
-        $d['medico_interviniente'] ?: '—',
+        $d['descripcion'] ?: '',
+        $d['acciones_tomadas'] ?: '',
+        $d['medico_interviniente'] ?: '',
         $d['estado'] === 'revisado' ? pill('Revisado', 'pill-ok') : pill('Pendiente', 'pill-aviso'),
-        $d['reporto'] ?: '—',
+        $d['reporto'] ?: '',
     ];
 }
 
-// ── Bloque 3: controles clínicos ────────────────────────────
 $sth = $pdo->prepare("SELECT c.*, u.nombre tomo
     FROM controles_clinicos c
     LEFT JOIN usuarios u ON u.id_usuario = c.id_usuario
@@ -115,14 +98,13 @@ foreach ($ctr as $d) {
         fecha_hora($d['fecha_hora']),
         $nombres_control[$d['tipo_control']] ?? $d['tipo_control'],
         trim($d['valor'] . ' ' . ($d['unidad'] ?? '')),
-        $d['observaciones'] ?: '—',
-        $d['tomo'] ?: '—',
+        $d['observaciones'] ?: '',
+        $d['tomo'] ?: '',
     ];
 }
 
-$titulo = 'Reporte consolidado — ' . $ficha['nombre'] . ' ' . $ficha['apellido'];
+$titulo = 'Reporte consolidado: ' . $ficha['nombre'] . ' ' . $ficha['apellido'];
 
-// ── Impresión: los tres bloques en un documento ─────────────
 if (imprimiendo()) {
     $sub = 'Del ' . fecha_corta($desde) . ' al ' . fecha_corta($hasta)
          . ' · DNI ' . ($ficha['dni'] ?: 's/d')
@@ -135,7 +117,6 @@ if (imprimiendo()) {
     exit;
 }
 
-// ── Exportación: los tres bloques uno debajo del otro ───────
 if (exportando()) {
     $cols = ['Bloque', 'Fecha y hora', 'Detalle', 'Dato 1', 'Dato 2', 'Estado', 'Observaciones', 'Responsable'];
     $filas = [];
@@ -168,8 +149,6 @@ tabla_reporte($cols_ctr, $filas_ctr);
 include '../config/footer.php';
 
 
-// El consolidado siempre necesita un residente elegido, así que su
-// barra de filtros no lleva la opción "Todos".
 function barra_filtros_consolidado() {
     global $desde, $hasta, $id_residente, $residentes;
     ?>
@@ -196,10 +175,9 @@ function barra_filtros_consolidado() {
         </form>
         <?php if ($id_residente): ?>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-            <a class="btn" href="<?= h(url_con(['imprimir' => 1])) ?>" target="_blank">📄 Generar PDF</a>
-            <a class="btn blue" href="<?= h(url_con(['exportar' => 1])) ?>">⬇ Exportar a Excel</a>
+            <a class="btn" href="<?= h(url_con(['imprimir' => 1])) ?>" target="_blank">Generar PDF</a>
+            <a class="btn blue" href="<?= h(url_con(['exportar' => 1])) ?>">Exportar a Excel</a>
         </div>
-        <p class="small" style="margin-top:8px">El botón de PDF abre el diálogo de impresión: elegí «Guardar como PDF» como destino.</p>
         <?php endif; ?>
     </div>
     <?php

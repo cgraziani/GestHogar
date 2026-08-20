@@ -144,14 +144,26 @@ $turnosDia = $stDia->fetchAll();
             <input type="date" name="fecha" value="<?=$editar['fecha']?>"
                    min="<?=$minCarga->format('Y-m-d')?>" max="<?=$maxCarga->format('Y-m-d')?>" required>
         <?php else: ?>
-            <label><b>Seleccionar días</b></label>
+            <label class="multi-days-titulo"><b>Seleccionar días</b></label>
             <div class="multi-days">
-                <?php for($i=0;$i<=14;$i++): $d=(clone $minCarga)->modify("+$i days"); ?>
-                    <label>
-                        <input type="checkbox" name="fechas[]" value="<?=$d->format('Y-m-d')?>">
-                        <?=$dias[((int)$d->format('N'))-1]?><br>
-                        <small><?=$d->format('d/m')?></small>
-                    </label>
+                <?php
+                $hoyStr = date('Y-m-d');
+                for($i=0;$i<=14;$i++):
+                    $d      = (clone $minCarga)->modify("+$i days");
+                    $iso    = $d->format('Y-m-d');
+                    $numDia = (int)$d->format('N');
+                    $clases = 'dia-chip';
+                    if($numDia >= 6)      $clases .= ' es-finde';
+                    if($iso === $hoyStr)  $clases .= ' es-hoy';
+                ?>
+                    <div class="dia-item">
+                        <input type="checkbox" id="fecha-<?=$iso?>" name="fechas[]" value="<?=$iso?>">
+                        <label class="<?=$clases?>" for="fecha-<?=$iso?>">
+                            <span class="dia-chip__nombre"><?=$dias[$numDia-1]?></span>
+                            <span class="dia-chip__fecha"><?=$d->format('d/m')?></span>
+                            <?php if($iso === $hoyStr): ?><span class="dia-chip__hoy">hoy</span><?php endif; ?>
+                        </label>
+                    </div>
                 <?php endfor; ?>
             </div>
             <div class="small"><b>Importante:</b> solo se pueden cargar turnos desde hoy hasta 14 días adelante.</div>

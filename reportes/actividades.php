@@ -1,14 +1,7 @@
 <?php
-// ============================================================
-// REPORTE DE ACTIVIDADES RECREATIVAS
-// Qué se hizo, quiénes participaron y cómo les fue. Sirve para
-// mirar el bienestar y la participación de cada residente.
-// ============================================================
 require_once 'comun.php';
 abrir_pagina_reporte();
 
-// Cuando se filtra por residente, solo interesan las actividades
-// en las que ese residente participó.
 $where = '';
 if ($id_residente) {
     $where = ' AND EXISTS (SELECT 1 FROM actividad_residentes ar
@@ -24,7 +17,6 @@ $sth = $pdo->prepare("SELECT a.*, u.nombre organizo
 $sth->execute([$desde, $hasta]);
 $datos = $sth->fetchAll();
 
-// Participantes de todas las actividades del período, en una sola consulta
 $participantes = [];
 if ($datos) {
     $ids = implode(',', array_map(fn($a) => (int)$a['id_actividad'], $datos));
@@ -47,7 +39,7 @@ foreach ($datos as $d) {
     $lista = $participantes[$d['id_actividad']] ?? [];
     $total_part += count($lista);
 
-    $nombres = implode(', ', array_map(fn($p) => $p['nombre'] . ' ' . $p['apellido'], $lista)) ?: '— sin participantes —';
+    $nombres = implode(', ', array_map(fn($p) => $p['nombre'] . ' ' . $p['apellido'], $lista)) ?: 'Sin participantes';
 
     $obs = [];
     foreach ($lista as $p) {
@@ -59,12 +51,12 @@ foreach ($datos as $d) {
     $filas[] = [
         fecha_corta($d['fecha']),
         $d['nombre'],
-        $d['descripcion'] ?: '—',
+        $d['descripcion'] ?: '',
         $nombres,
         count($lista),
-        $obs ? implode(' · ', $obs) : '—',
-        $d['observaciones'] ?: '—',
-        $d['organizo'] ?: '—',
+        $obs ? implode(' · ', $obs) : '',
+        $d['observaciones'] ?: '',
+        $d['organizo'] ?: '',
     ];
 }
 
@@ -78,7 +70,6 @@ $resumen = [
 salida_reporte('Reporte de actividades recreativas', 'actividades', $cols, $filas);
 
 echo '<h1>Reporte de actividades recreativas</h1>';
-echo '<p class="small">Actividades realizadas con los residentes, quiénes participaron y cómo les fue.</p>';
 barra_filtros(['residente' => true]);
 resumen_reporte($resumen);
 tabla_reporte($cols, $filas);

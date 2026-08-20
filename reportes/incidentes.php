@@ -1,9 +1,4 @@
 <?php
-// ============================================================
-// REPORTE DE INCIDENTES / ACCIDENTES
-// Historial auditable: qué pasó, qué gravedad tuvo, qué se hizo
-// y si Carla ya lo revisó.
-// ============================================================
 require_once 'comun.php';
 abrir_pagina_reporte();
 
@@ -36,12 +31,12 @@ foreach ($datos as $d) {
         fecha_hora($d['fecha_hora']),
         $d['rn'] . ' ' . $d['ra'],
         pill_gravedad($d['gravedad']),
-        $d['descripcion'] ?: '—',
-        $d['acciones_tomadas'] ?: '—',
-        $d['medico_interviniente'] ?: '—',
+        $d['descripcion'] ?: '',
+        $d['acciones_tomadas'] ?: '',
+        $d['medico_interviniente'] ?: '',
         $d['notificado_responsable'] ? 'Sí' : 'No',
         $d['estado'] === 'revisado' ? pill('Revisado', 'pill-ok') : pill('Pendiente', 'pill-aviso'),
-        $d['reporto'] ?: '—',
+        $d['reporto'] ?: '',
     ];
 }
 
@@ -55,13 +50,13 @@ $resumen = [
 $selG = function ($v) use ($filtro_gravedad) { return $filtro_gravedad === $v ? 'selected' : ''; };
 $selE = function ($v) use ($filtro_estado) { return $filtro_estado === $v ? 'selected' : ''; };
 $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Gravedad</label>'
-       . '<select name="gravedad"><option value="">— Todas —</option>'
+       . '<select name="gravedad"><option value="">Todas</option>'
        . '<option value="grave" ' . $selG('grave') . '>Grave</option>'
        . '<option value="moderado" ' . $selG('moderado') . '>Moderado</option>'
        . '<option value="leve" ' . $selG('leve') . '>Leve</option>'
        . '</select></div>'
        . '<div><label style="font-size:13px;font-weight:600;display:block">Estado</label>'
-       . '<select name="estado"><option value="">— Todos —</option>'
+       . '<select name="estado"><option value="">Todos</option>'
        . '<option value="pendiente" ' . $selE('pendiente') . '>Sin revisar</option>'
        . '<option value="revisado" ' . $selE('revisado') . '>Revisados</option>'
        . '</select></div>';
@@ -69,7 +64,6 @@ $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Grave
 salida_reporte('Reporte de incidentes', 'incidentes', $cols, $filas);
 
 echo '<h1>Reporte de incidentes / accidentes</h1>';
-echo '<p class="small">Historial auditable de cada incidente, ordenado por gravedad. Los graves aparecen primero.</p>';
 barra_filtros(['residente' => true, 'extra' => $extra]);
 resumen_reporte($resumen);
 tabla_reporte($cols, $filas);

@@ -57,20 +57,30 @@ $(document).ready(function () {
 
 <script>
 (function () {
+    var MINIMO_PARA_BUSCAR = 8;
+
     function activarBuscador(sel) {
         if (!window.TomSelect || sel.tomselect) return;
-        new TomSelect(sel, {
+
+        var opciones = {
             create: false,
             allowEmptyOption: true,
             maxOptions: null,
             selectOnTab: true,
-            placeholder: 'Escribí para buscar...',
             render: {
                 no_results: function () {
                     return '<div class="no-results">Sin resultados</div>';
                 }
             }
-        });
+        };
+
+        if (sel.options.length >= MINIMO_PARA_BUSCAR) {
+            opciones.placeholder = 'Escribí para buscar...';
+        } else {
+            opciones.controlInput = null;
+        }
+
+        new TomSelect(sel, opciones);
     }
 
     function activarTodos(raiz) {
@@ -481,11 +491,22 @@ function mostrarToast(mensaje, tipo) {
 (function() {
 
 function getMensaje(input) {
-    var siguiente = input.nextElementSibling;
+    var visible = input.tomselect ? input.tomselect.wrapper : input;
+
+    var cont = visible.parentNode;
+    if (cont && cont.classList && cont.classList.contains('form-row')) {
+        var wrap = document.createElement('div');
+        wrap.className = 'campo';
+        cont.insertBefore(wrap, visible);
+        wrap.appendChild(visible);
+        cont = wrap;
+    }
+
+    var siguiente = visible.nextElementSibling;
     if (siguiente && siguiente.classList.contains('field-msg')) return siguiente;
     var msg = document.createElement('span');
     msg.className = 'field-msg';
-    input.parentNode.insertBefore(msg, input.nextSibling);
+    cont.insertBefore(msg, visible.nextSibling);
     return msg;
 }
 

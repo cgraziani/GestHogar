@@ -1,8 +1,4 @@
 <?php
-// ============================================================
-// REPORTE DE TAREAS DE RUTINA
-// Cumplimiento de las tareas diarias: qué se hizo, qué no, y por qué.
-// ============================================================
 require_once 'comun.php';
 abrir_pagina_reporte();
 
@@ -36,12 +32,12 @@ foreach ($datos as $d) {
     $filas[] = [
         fecha_hora($d['fecha_hora']),
         $d['rn'] . ' ' . $d['ra'],
-        $d['titulo'] ?: '— tarea eliminada —',
-        $d['tipo'] ? ucfirst($d['tipo']) : '—',
-        $d['horario'] ?: '—',
+        $d['titulo'] ?: 'Tarea eliminada',
+        $d['tipo'] ? ucfirst($d['tipo']) : '',
+        $d['horario'] ?: '',
         pill_estado_medicacion($d['estado_tarea']),
-        $d['motivo'] ?: '—',
-        $d['cuidadora'] ?: '—',
+        $d['motivo'] ?: '',
+        $d['cuidadora'] ?: '',
     ];
 }
 
@@ -54,15 +50,13 @@ $resumen = [
     ['Cumplimiento', $cumplimiento . '%', 'Realizadas sobre el total'],
 ];
 
-// Tareas activas que todavía no tienen ningún registro: son el punto ciego
-// del reporte, porque no aparecen en administracion_tareas.
 $sinRegistro = $pdo->query("SELECT COUNT(*) FROM tareas_residente tr
     WHERE tr.estado='activo'
     AND NOT EXISTS (SELECT 1 FROM administracion_tareas a WHERE a.id_tarea = tr.id_tarea)")->fetchColumn();
 
 $sel = function ($v) use ($filtro_estado) { return $filtro_estado === $v ? 'selected' : ''; };
 $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Estado</label>'
-       . '<select name="estado"><option value="">— Todos —</option>'
+       . '<select name="estado"><option value="">Todos</option>'
        . '<option value="incumplidas" ' . $sel('incumplidas') . '>Solo incumplidas</option>'
        . '<option value="realizada" ' . $sel('realizada') . '>Realizadas</option>'
        . '<option value="no_pudo" ' . $sel('no_pudo') . '>No se pudo</option>'
@@ -72,14 +66,11 @@ $extra = '<div><label style="font-size:13px;font-weight:600;display:block">Estad
 salida_reporte('Reporte de tareas de rutina', 'tareas', $cols, $filas);
 
 echo '<h1>Reporte de tareas de rutina</h1>';
-echo '<p class="small">Cumplimiento de las tareas diarias de cada residente, con el motivo de cada incumplimiento.</p>';
 barra_filtros(['residente' => true, 'extra' => $extra]);
 resumen_reporte($resumen);
 if ($sinRegistro > 0) {
     echo '<div class="card" style="border-left:4px solid #e6a700">'
-       . '<b>' . (int)$sinRegistro . ' tarea' . ($sinRegistro > 1 ? 's' : '') . ' sin ningún registro de cumplimiento.</b><br>'
-       . '<span class="small">Están cargadas y activas, pero nadie marcó todavía si se hicieron, '
-       . 'así que no figuran en la tabla de abajo.</span></div>';
+       . '<b>' . (int)$sinRegistro . ' tarea' . ($sinRegistro > 1 ? 's' : '') . ' sin ningún registro de cumplimiento.</b></div>';
 }
 tabla_reporte($cols, $filas);
 include '../config/footer.php';

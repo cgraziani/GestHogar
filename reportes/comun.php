@@ -1,32 +1,14 @@
 <?php
-// ============================================================
-// BASE COMÚN DE LOS REPORTES
-//
-// Cada reporte arma dos cosas y delega el resto acá:
-//   $cols  = ['Fecha', 'Residente', ...]
-//   $filas = [ [valor, valor, ...], ... ]
-//
-// Un valor puede ser:
-//   - un texto suelto  -> se usa igual en pantalla y en la exportación
-//   - ['texto' => '...', 'html' => '...'] -> el texto va al CSV y el html
-//     a la pantalla (sirve para las píldoras de color)
-//
-// Con eso salen solas las tres salidas: pantalla, CSV para Excel
-// e impresión / PDF.
-// ============================================================
 require_once '../config/session.php';
 solo_admin();
 require_once '../config/db.php';
 
-// ── Filtros que comparten todos los reportes ────────────────
 $hasta = $_GET['hasta'] ?? date('Y-m-d');
 $desde = $_GET['desde'] ?? date('Y-m-d', strtotime('-30 days'));
-// Si vienen dados vuelta los ordena, así el rango nunca queda vacío
 if ($desde > $hasta) { [$desde, $hasta] = [$hasta, $desde]; }
 
 $id_residente = isset($_GET['residente']) ? (int)$_GET['residente'] : 0;
 
-// Rango completo en formato datetime, para comparar contra columnas DATETIME
 $desde_dt = $desde . ' 00:00:00';
 $hasta_dt = $hasta . ' 23:59:59';
 
@@ -35,12 +17,9 @@ $residentes = $pdo->query("SELECT id_residente, nombre, apellido FROM residentes
 function exportando() { return isset($_GET['exportar']); }
 function imprimiendo() { return isset($_GET['imprimir']); }
 
-// Texto plano de una celda (para CSV)
 function celda_texto($c) { return is_array($c) ? ($c['texto'] ?? '') : (string)$c; }
-// HTML de una celda (para pantalla)
 function celda_html($c)  { return is_array($c) ? ($c['html'] ?? h($c['texto'] ?? '')) : h($c); }
 
-// ── Píldoras de color reutilizables ─────────────────────────
 function pill($texto, $clase) {
     return ['texto' => $texto, 'html' => '<span class="pill ' . $clase . '">' . h($texto) . '</span>'];
 }
@@ -58,12 +37,9 @@ function pill_gravedad($g) {
     return pill(ucfirst($g), $map[$g] ?? 'pill-neutro');
 }
 
-function fecha_hora($v) { return $v ? date('d/m/Y H:i', strtotime($v)) : '—'; }
-function fecha_corta($v) { return $v ? date('d/m/Y', strtotime($v)) : '—'; }
+function fecha_hora($v) { return $v ? date('d/m/Y H:i', strtotime($v)) : ''; }
+function fecha_corta($v) { return $v ? date('d/m/Y', strtotime($v)) : ''; }
 
-// ── Exportación a CSV que abre bien en Excel ────────────────
-// Separador ';' y BOM UTF-8: así Excel en español separa las columnas
-// solo y respeta los acentos, sin depender de ninguna librería.
 function exportar_csv($nombre_archivo, $cols, $filas) {
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="' . $nombre_archivo . '-' . date('Y-m-d') . '.csv"');
@@ -77,8 +53,6 @@ function exportar_csv($nombre_archivo, $cols, $filas) {
     exit;
 }
 
-// ── Barra de filtros ────────────────────────────────────────
-// $opciones: ['residente' => true/false, 'extra' => html adicional]
 function barra_filtros($opciones = []) {
     global $desde, $hasta, $id_residente, $residentes;
     $con_residente = $opciones['residente'] ?? true;
@@ -97,7 +71,7 @@ function barra_filtros($opciones = []) {
             <div>
                 <label style="font-size:13px;font-weight:600;display:block">Residente</label>
                 <select name="residente" class="buscador" style="min-width:220px">
-                    <option value="0">— Todos —</option>
+                    <option value="0">Todos</option>
                     <?php foreach ($residentes as $r): ?>
                         <option value="<?= $r['id_residente'] ?>" <?= $id_residente == $r['id_residente'] ? 'selected' : '' ?>><?= h($r['nombre'] . ' ' . $r['apellido']) ?></option>
                     <?php endforeach; ?>
@@ -111,20 +85,18 @@ function barra_filtros($opciones = []) {
             </div>
         </form>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-            <a class="btn blue" href="<?= h(url_con(['exportar' => 1])) ?>">⬇ Exportar a Excel</a>
-            <a class="btn gray" href="<?= h(url_con(['imprimir' => 1])) ?>" target="_blank">🖨 Imprimir / Guardar PDF</a>
+            <a class="btn blue" href="<?= h(url_con(['exportar' => 1])) ?>">Exportar a Excel</a>
+            <a class="btn gray" href="<?= h(url_con(['imprimir' => 1])) ?>" target="_blank">Imprimir / Guardar PDF</a>
         </div>
     </div>
     <?php
 }
 
-// Arma la URL actual agregando o pisando parámetros
 function url_con($extra) {
     $q = array_merge($_GET, $extra);
     return '?' . http_build_query($q);
 }
 
-// ── Tarjetas de resumen (los números de arriba) ─────────────
 function resumen_reporte($items) {
     if (empty($items)) return;
     echo '<div class="grid">';
@@ -137,9 +109,6 @@ function resumen_reporte($items) {
     echo '</div>';
 }
 
-// ── Salida final ────────────────────────────────────────────
-// Solo se llama cuando el pedido es una exportación o una impresión;
-// la vista en pantalla la arma cada reporte con sus propios filtros.
 function salida_reporte($titulo, $archivo, $cols, $filas) {
     if (exportando()) exportar_csv($archivo, $cols, $filas);
     if (imprimiendo()) {
@@ -148,7 +117,6 @@ function salida_reporte($titulo, $archivo, $cols, $filas) {
     }
 }
 
-// "Del 01/06/2026 al 30/06/2026 · Residente: Rosa Gomez"
 function subtitulo_rango() {
     global $desde, $hasta, $id_residente, $residentes;
     $s = 'Del ' . fecha_corta($desde) . ' al ' . fecha_corta($hasta);
@@ -177,7 +145,6 @@ function tabla_reporte($cols, $filas) {
     echo '</tbody></table>';
 }
 
-// Página suelta y limpia, pensada para "Imprimir → Guardar como PDF"
 function vista_impresion($titulo, $subtitulo, $cols, $filas, $bloques = null) {
     ?><!doctype html>
 <html lang="es">
@@ -203,7 +170,7 @@ function vista_impresion($titulo, $subtitulo, $cols, $filas, $bloques = null) {
 <body onload="window.print()">
     <h1><?= h($titulo) ?></h1>
     <p class="sub"><?= h($subtitulo) ?></p>
-    <p class="marca">GestHogar — Hogar Nongo · Generado el <?= date('d/m/Y H:i') ?> por <?= h($_SESSION['usuario']['nombre'] ?? '') ?></p>
+    <p class="marca">GestHogar (Hogar Nongo) · Generado el <?= date('d/m/Y H:i') ?> por <?= h($_SESSION['usuario']['nombre'] ?? '') ?></p>
 
     <?php if ($bloques !== null): ?>
         <?php foreach ($bloques as $b): ?>
@@ -214,13 +181,12 @@ function vista_impresion($titulo, $subtitulo, $cols, $filas, $bloques = null) {
         <?php tabla_impresion($cols, $filas); ?>
     <?php endif; ?>
 
-    <p class="pie">Documento generado automáticamente por GestHogar. Los registros reflejan lo cargado por el personal al momento de la impresión.</p>
 </body>
 </html><?php
 }
 
 function tabla_impresion($cols, $filas) {
-    if (empty($filas)) { echo '<p class="vacio">Sin registros en el período.</p>'; return; }
+    if (empty($filas)) { return; }
     echo '<table><thead><tr>';
     foreach ($cols as $c) echo '<th>' . h($c) . '</th>';
     echo '</tr></thead><tbody>';
@@ -232,8 +198,6 @@ function tabla_impresion($cols, $filas) {
     echo '</tbody></table>';
 }
 
-// El menú se incluye recién acá: si el pedido era una exportación,
-// no queremos haber mandado HTML antes de los headers.
 function abrir_pagina_reporte() {
     if (exportando() || imprimiendo()) return;
     include '../config/menu.php';
