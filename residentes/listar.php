@@ -24,6 +24,12 @@ function estado_class($e) {
     return 'estado-pendiente';
 }
 
+function etiqueta_baja($t) {
+    $m = ['fallecimiento' => 'Fallecimiento', 'traslado' => 'Traslado',
+          'voluntaria' => 'Retiro voluntario', 'otro' => 'Otro'];
+    return $m[$t] ?? $t;
+}
+
 if (isset($_GET['accion']) && es_admin()) {
     $id_res  = (int)$_GET['id'];
     $accion  = $_GET['accion'];
@@ -33,12 +39,20 @@ if (isset($_GET['accion']) && es_admin()) {
     $res_actual = $actual->fetch();
     $estado_anterior = $res_actual['estado'];
 
-    if ($accion === 'pausado') {
+    if ($accion === 'pausado' || $accion === 'baja') {
         $motivo = trim($_GET['motivo'] ?? '');
-        if (empty($motivo)) {
-            header('Location: listar.php?toast=El+motivo+es+obligatorio+para+suspender+el+servicio&tipo=error');
+        if (mb_strlen($motivo) < 5) {
+            $que = $accion === 'baja' ? 'dar+de+baja+al+residente' : 'suspender+el+servicio';
+            header('Location: listar.php?toast=Hay+que+registrar+el+motivo+para+' . $que . '&tipo=error');
             exit;
         }
+    }
+
+    $tipos_baja = ['fallecimiento', 'traslado', 'voluntaria', 'otro'];
+    $tipo_motivo = trim($_GET['tipo_motivo'] ?? '');
+    if ($accion === 'baja' && !in_array($tipo_motivo, $tipos_baja, true)) {
+        header('Location: listar.php?toast=Hay+que+indicar+el+tipo+de+baja&tipo=error');
+        exit;
     }
 
     if ($accion === 'baja' && !isset($_GET['confirmar_baja'])) {
@@ -66,8 +80,8 @@ if (isset($_GET['accion']) && es_admin()) {
     $pdo->prepare('UPDATE residentes SET estado=?, updated_by=? WHERE id_residente=?')
         ->execute([$accion, uid(), $id_res]);
 
-    $pdo->prepare('INSERT INTO historial_estados(entidad,id_registro,estado_anterior,estado_nuevo,cambiado_por,motivo,fecha_fin) VALUES(?,?,?,?,?,?,?)')
-        ->execute(['residente', $id_res, $estado_anterior, $accion, uid(), $motivo ?: null, $fecha_fin]);
+    $pdo->prepare('INSERT INTO historial_estados(entidad,id_registro,estado_anterior,estado_nuevo,cambiado_por,motivo,tipo_motivo,fecha_fin) VALUES(?,?,?,?,?,?,?,?)')
+        ->execute(['residente', $id_res, $estado_anterior, $accion, uid(), $motivo ?: null, $tipo_motivo ?: null, $fecha_fin]);
 
     if ($accion === 'baja') {
         if ($res_actual['id_habitacion']) {
@@ -78,20 +92,28 @@ if (isset($_GET['accion']) && es_admin()) {
             $pdo->prepare("UPDATE camas SET estado='disponible', updated_by=? WHERE id_cama=?")
                 ->execute([uid(), $res_actual['id_cama']]);
         }
-        $pdo->prepare('UPDATE residentes SET fecha_egreso=CURDATE() WHERE id_residente=?')
-            ->execute([$id_res]);
+        $pdo->prepare('UPDATE residentes SET fecha_egreso=CURDATE(), tipo_baja=?, motivo_estado=?, fecha_regreso_estimada=NULL WHERE id_residente=?')
+            ->execute([$tipo_motivo, $motivo, $id_res]);
     }
 
     if ($accion === 'pausado') {
+        $pdo->prepare('UPDATE residentes SET motivo_estado=?, fecha_regreso_estimada=?, tipo_baja=NULL WHERE id_residente=?')
+            ->execute([$motivo, $fecha_fin, $id_res]);
         $pdo->prepare("UPDATE medicacion_residente SET estado='pausado', updated_by=? WHERE id_residente=? AND estado='activo'")
             ->execute([uid(), $id_res]);
     }
 
     if ($accion === 'activo') {
-        $pdo->prepare('UPDATE residentes SET fecha_egreso=NULL WHERE id_residente=?')
+        $pdo->prepare('UPDATE residentes SET fecha_egreso=NULL, tipo_baja=NULL, motivo_estado=NULL, fecha_regreso_estimada=NULL WHERE id_residente=?')
             ->execute([$id_res]);
         $pdo->prepare("UPDATE medicacion_residente SET estado='activo', updated_by=? WHERE id_residente=? AND estado='pausado'")
             ->execute([uid(), $id_res]);
+    }
+
+    if ($accion === 'baja' && $tipo_motivo === 'fallecimiento') {
+        header('Location: listar.php?ver=' . $id_res
+             . '&toast=' . urlencode('Baja registrada. Adjuntá el certificado de defunción abajo.') . '&tipo=warn');
+        exit;
     }
 
     header('Location: listar.php?toast=Estado+actualizado+correctamente&tipo=ok');
@@ -123,7 +145,7 @@ if (isset($_GET['ver'])) {
     $med = $med->fetchAll();
 
     $hist = $pdo->prepare("SELECT am.*, m.nombre med, m.presentacion,
-                                  u.nombre cuidadora, mr.dosis, mr.horario,
+                                  CONCAT(u.nombre,' ',COALESCE(u.apellido,'')) cuidadora, mr.dosis, mr.horario,
                                   rec.diagnostico
                            FROM administracion_medicacion am
                            JOIN medicamentos m ON m.id_medicamento = am.id_medicamento
@@ -136,7 +158,7 @@ if (isset($_GET['ver'])) {
     $hist->execute([$r['id_residente']]);
     $hist = $hist->fetchAll();
 
-    $controles = $pdo->prepare("SELECT cc.*, u.nombre registrado_por
+    $controles = $pdo->prepare("SELECT cc.*, CONCAT(u.nombre,' ',COALESCE(u.apellido,'')) registrado_por
                                 FROM controles_clinicos cc
                                 LEFT JOIN usuarios u ON u.id_usuario = cc.id_usuario
                                 WHERE cc.id_residente=?
@@ -168,21 +190,22 @@ if (isset($_GET['ver'])) {
                 <h2 style="margin:0"><?= htmlspecialchars($r['nombre'] . ' ' . $r['apellido']) ?></h2>
                 <span class="pill estado-<?= $r['estado'] ?>"><?= $r['estado'] ?></span>
                 <?php if ($r['autorizado_foto']): ?>
-                    <span class="badge" style="background:#e8f5e9;color:#2e7d32">Foto autorizada</span>
+                    <span class="badge" style="background:#e8f5e9;color:#2e7d32"> Foto autorizada</span>
                 <?php endif; ?>
             </div>
 
             <table class="no-datatable" style="width:100%">
                 <thead>
                     <tr>
-                        <th>DNI</th><th>Nacimiento</th><th>Ingreso</th>
+                        <th>DNI</th><th>Sexo</th><th>Nacimiento</th><th>Ingreso</th>
                         <th>Habitación</th><th>Movilidad</th>
-                        <th>Familiar</th><th>Teléfono</th>
+                        <th>Familiar responsable</th><th>Parentesco</th><th>Teléfono</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
                         <td><?= htmlspecialchars($r['dni']) ?></td>
+                        <td><?= $r['sexo'] === 'F' ? 'Femenino' : ($r['sexo'] === 'M' ? 'Masculino' : '') ?></td>
                         <td><?= $r['fecha_nacimiento'] ?></td>
                         <td><?= $r['fecha_ingreso'] ?: '' ?></td>
                         <td>
@@ -193,14 +216,121 @@ if (isset($_GET['ver'])) {
                                 <span class="small">Sin asignar</span>
                             <?php endif; ?>
                         </td>
-                        <td><?= $r['movilidad_autonoma'] ? 'Sí' : 'No' ?></td>
-                        <td><?= htmlspecialchars($r['contacto_familiar']) ?></td>
-                        <td><?= htmlspecialchars($r['telefono_familiar']) ?></td>
+                        <td><?= $r['movilidad_autonoma'] ? ' Sí' : ' No' ?></td>
+                        <td><?= htmlspecialchars($r['contacto_familiar'] ?: '') ?></td>
+                        <td><?= htmlspecialchars($r['parentesco_familiar'] ?: '') ?></td>
+                        <td><?= htmlspecialchars($r['telefono_familiar'] ?: '') ?></td>
                     </tr>
                 </tbody>
             </table>
+
+            <?php if ($r['id_conyuge']): ?>
+                <?php
+                $cq = $pdo->prepare('SELECT nombre, apellido FROM residentes WHERE id_residente=?');
+                $cq->execute([$r['id_conyuge']]);
+                $conyuge = $cq->fetch();
+                ?>
+                <?php if ($conyuge): ?>
+                <p class="small" style="margin-top:10px">
+                     Comparte habitación con <b><?= h($conyuge['nombre'] . ' ' . $conyuge['apellido']) ?></b> (cónyuge).
+                </p>
+                <?php endif; ?>
+            <?php endif; ?>
         </div>
     </div>
+</div>
+
+<?php
+$docs = $pdo->prepare("SELECT d.*, u.nombre subido_por
+    FROM documentos_residente d
+    LEFT JOIN usuarios u ON u.id_usuario = d.created_by
+    WHERE d.id_residente = ? AND d.estado = 'activo'
+    ORDER BY d.created_at DESC");
+$docs->execute([$r['id_residente']]);
+$docs = $docs->fetchAll();
+
+$tipos_doc = [
+    'dni'                => 'DNI / documento',
+    'carnet_obra_social' => 'Carnet de obra social',
+    'historia_clinica'   => 'Historia clínica',
+    'autorizacion'       => 'Autorización firmada',
+    'contrato'           => 'Contrato de ingreso',
+    'certificado_defuncion' => 'Certificado de defunción',
+    'otro'               => 'Otro',
+];
+?>
+<?php
+$falta_certificado = ($r['estado'] === 'baja' && $r['tipo_baja'] === 'fallecimiento')
+    && !array_filter($docs, fn($d) => $d['tipo'] === 'certificado_defuncion');
+?>
+<div class="card">
+    <h2 style="margin-top:0">Documentación asociada</h2>
+
+    <?php if ($r['estado'] !== 'activo' && $r['motivo_estado']): ?>
+        <div style="border-left:4px solid var(--border-estado-alerta);padding:8px 14px;margin-bottom:14px">
+            <b><?= $r['estado'] === 'baja' ? 'Baja' . ($r['tipo_baja'] ? ' por ' . h(strtolower(etiqueta_baja($r['tipo_baja']))) : '') : 'Servicio suspendido' ?>:</b>
+            <?= h($r['motivo_estado']) ?>
+            <?php if ($r['fecha_regreso_estimada']): ?>
+                <br><span class="small">Regreso estimado: <b><?= date('d/m/Y', strtotime($r['fecha_regreso_estimada'])) ?></b></span>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($falta_certificado): ?>
+        <div class="card" style="border-left:4px solid var(--border-estado-problema);margin-bottom:14px">
+            <b>Falta el certificado de defunción.</b>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!empty($docs)): ?>
+    <table class="no-datatable" style="width:100%">
+        <thead><tr><th>Tipo</th><th>Descripción</th><th>Archivo</th><th>Subido</th><th>Por</th><?php if (es_admin()): ?><th></th><?php endif; ?></tr></thead>
+        <tbody>
+        <?php foreach ($docs as $d): ?>
+            <tr>
+                <td><span class="badge"><?= h($tipos_doc[$d['tipo']] ?? $d['tipo']) ?></span></td>
+                <td><?= h($d['descripcion'] ?: '') ?></td>
+                <td><a class="btn blue" href="<?= BASE_URL . '/' . h($d['archivo']) ?>" target="_blank">Ver archivo</a></td>
+                <td><span class="small"><?= date('d/m/Y H:i', strtotime($d['created_at'])) ?></span></td>
+                <td><span class="small"><?= h($d['subido_por'] ?: '') ?></span></td>
+                <?php if (es_admin()): ?>
+                <td>
+                    <a class="btn red" href="documentos.php?baja=<?= (int)$d['id_documento'] ?>"
+                       onclick="return confirmarLink(this,'¿Dar de baja este documento?','Dar de baja','red')">Dar de baja</a>
+                </td>
+                <?php endif; ?>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <?php endif; ?>
+
+    <?php if (es_admin()): ?>
+    <form method="post" action="documentos.php" enctype="multipart/form-data"
+          style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end">
+        <input type="hidden" name="nuevo_documento" value="1">
+        <input type="hidden" name="id_residente" value="<?= (int)$r['id_residente'] ?>">
+        <div class="campo">
+            <label style="font-size:13px;font-weight:600">Tipo de documento</label>
+            <select name="tipo">
+                <?php foreach ($tipos_doc as $k => $v): ?>
+                    <option value="<?= $k ?>"><?= $v ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="campo">
+            <label style="font-size:13px;font-weight:600">Descripción</label>
+            <input name="descripcion">
+        </div>
+        <div class="campo">
+            <label style="font-size:13px;font-weight:600">Archivo</label>
+            <input type="file" name="archivo" accept=".pdf,.jpg,.jpeg,.png,.webp" required>
+        </div>
+        <div>
+            <button type="submit" class="btn">Adjuntar</button>
+        </div>
+    </form>
+    <?php endif; ?>
 </div>
 
 <div class="card">
@@ -395,7 +525,7 @@ $rows = $pdo->query("SELECT r.*, h.numero habitacion, h.sector
     <thead>
         <tr>
             <th>Foto</th><th>Nombre</th><th>DNI</th>
-            <th>Habitación</th><th>Familiar</th><th>Estado</th><th>Acciones</th>
+            <th>Habitación</th><th>Familiar</th><th>Actividad</th><th>Estado</th><th>Acciones</th>
         </tr>
     </thead>
     <tbody>
@@ -420,13 +550,35 @@ $rows = $pdo->query("SELECT r.*, h.numero habitacion, h.sector
                 <?= htmlspecialchars($r['contacto_familiar']) ?><br>
                 <span class="small"><?= htmlspecialchars($r['telefono_familiar']) ?></span>
             </td>
-            <td><span class="pill estado-<?= $r['estado'] ?>"><?= ['activo'=>'Activo','pausado'=>'Servicio suspendido','baja'=>'Baja'][$r['estado']] ?? $r['estado'] ?></span></td>
+            <td>
+                <?php
+                $niv_labels = ['activo'=>'Activo','asistido'=>'Asistido','reducido'=>'Reducido','postrado'=>'Postrado'];
+                $niv_cls    = ['activo'=>'pill-ok','asistido'=>'pill-aviso','reducido'=>'pill-aviso','postrado'=>'pill-mal'];
+                $niv = $r['nivel_actividad'] ?? '';
+                if ($niv): ?>
+                    <span class="pill <?= $niv_cls[$niv] ?? 'pill-neutro' ?>"><?= $niv_labels[$niv] ?? $niv ?></span>
+                <?php else: ?>
+                    <span style="color:#aaa"></span>
+                <?php endif; ?>
+            </td>
+            <td>
+                <span class="pill estado-<?= $r['estado'] ?>"><?= ['activo'=>'Activo','pausado'=>'Ausente','baja'=>'Baja'][$r['estado']] ?? $r['estado'] ?></span>
+                <?php if ($r['estado'] !== 'activo' && $r['motivo_estado']): ?>
+                    <br><span class="small"><?= h($r['motivo_estado']) ?></span>
+                <?php endif; ?>
+                <?php if ($r['estado'] === 'pausado' && $r['fecha_regreso_estimada']): ?>
+                    <br><span class="small">Regreso estimado: <b><?= date('d/m/Y', strtotime($r['fecha_regreso_estimada'])) ?></b></span>
+                <?php endif; ?>
+                <?php if ($r['estado'] === 'baja' && $r['tipo_baja']): ?>
+                    <br><span class="badge"><?= h(etiqueta_baja($r['tipo_baja'])) ?></span>
+                <?php endif; ?>
+            </td>
             <td>
                 <a class="btn blue" href="?ver=<?= $r['id_residente'] ?>">Ver ficha</a>
                 <?php if (es_admin() && $r['token_visita']): ?>
                     <button class="btn gray" style="font-size:12px"
-                        onclick="copiarLink('<?= BASE_URL ?>/visitas/solicitar.php?token=<?= $r['token_visita'] ?>', this)">
-Link visitas
+                        onclick="copiarLink('<?= BASE_URL_FULL ?>/visitas/solicitar.php?token=<?= $r['token_visita'] ?>', this)">
+                         Link visitas
                     </button>
                 <?php endif; ?>
                 <?php if (es_admin()): ?>
@@ -434,21 +586,21 @@ Link visitas
                     <?php if ($r['estado'] === 'activo'): ?>
                         <button class="btn orange"
                             onclick="abrirModalSuspender(<?= $r['id_residente'] ?>, '<?= htmlspecialchars($r['nombre'].' '.$r['apellido']) ?>')">
-                            Suspender servicio
+                            Ausente
                         </button>
-                        <a class="btn red" href="?accion=baja&id=<?= $r['id_residente'] ?>"
-                           onclick="return confirmarLink(this,'¿Dar de baja a <?= htmlspecialchars($r['nombre']) ?>? Se registrará la fecha de egreso y se liberará la cama.','Dar de baja','red')">
-                           Dar de baja
-                        </a>
+                        <button class="btn red"
+                            onclick="abrirModalBaja(<?= $r['id_residente'] ?>, '<?= htmlspecialchars($r['nombre'].' '.$r['apellido'], ENT_QUOTES) ?>')">
+                            Dar de baja
+                        </button>
                     <?php elseif ($r['estado'] === 'pausado'): ?>
                         <a class="btn green" href="?accion=activo&id=<?= $r['id_residente'] ?>"
                            onclick="return confirmarLink(this,'¿Reactivar el servicio de <?= htmlspecialchars($r['nombre']) ?>? Se reactivarán sus medicaciones.','Reactivar servicio','green')">
                            Reactivar servicio
                         </a>
-                        <a class="btn red" href="?accion=baja&id=<?= $r['id_residente'] ?>"
-                           onclick="return confirmarLink(this,'¿Dar de baja a <?= htmlspecialchars($r['nombre']) ?>?','Dar de baja','red')">
-                           Dar de baja
-                        </a>
+                        <button class="btn red"
+                            onclick="abrirModalBaja(<?= $r['id_residente'] ?>, '<?= htmlspecialchars($r['nombre'].' '.$r['apellido'], ENT_QUOTES) ?>')">
+                            Dar de baja
+                        </button>
                     <?php elseif ($r['estado'] === 'baja'): ?>
                         <a class="btn green" href="?accion=activo&id=<?= $r['id_residente'] ?>"
                            onclick="return confirmarLink(this,'¿Reincorporar a <?= htmlspecialchars($r['nombre']) ?>?','Reincorporar','green')">
@@ -468,15 +620,20 @@ $habitaciones_modal = $pdo->query("
     FROM habitaciones h
     JOIN camas c ON c.id_habitacion = h.id_habitacion
     WHERE c.estado = 'disponible'
+      AND h.habilitada = 1
+      AND h.estado != 'mantenimiento'
     ORDER BY h.numero
 ")->fetchAll();
 $camas_modal        = $pdo->query("SELECT * FROM camas WHERE estado='disponible' ORDER BY id_habitacion, identificador")->fetchAll();
+
+$residentes_para_conyuge = $pdo->query("SELECT id_residente, nombre, apellido
+    FROM residentes WHERE estado IN('activo','pausado') ORDER BY apellido, nombre")->fetchAll();
 ?>
 
 <div id="modal-residente" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
     <div style="background:var(--bg-surface);color:var(--text-main);border-radius:10px;padding:24px 28px;width:100%;max-width:680px;position:relative">
 
-        <button onclick="cerrarModalResidente()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)">×</button>
+        <button onclick="cerrarModalResidente()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)"></button>
 
         <h2 id="modal-res-titulo" style="margin:0 0 16px">Crear residente</h2>
 
@@ -504,6 +661,14 @@ $camas_modal        = $pdo->query("SELECT * FROM camas WHERE estado='disponible'
                     <label style="font-size:13px;font-weight:600">DNI *</label>
                     <input name="dni" id="f-res-dni" placeholder="25123456" required pattern="[0-9]{7,8}" inputmode="numeric" style="width:100%;box-sizing:border-box">
                 </div>
+                <div>
+                    <label style="font-size:13px;font-weight:600">Sexo *</label>
+                    <select name="sexo" id="f-res-sexo" required style="width:100%;box-sizing:border-box">
+                        <option value="">Elegir...</option>
+                        <option value="F">Femenino</option>
+                        <option value="M">Masculino</option>
+                    </select>
+                </div>
             </div>
 
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:10px;align-items:end">
@@ -514,6 +679,16 @@ $camas_modal        = $pdo->query("SELECT * FROM camas WHERE estado='disponible'
                 <div>
                     <label style="font-size:13px;font-weight:600">Fecha de ingreso</label>
                     <input type="date" name="fecha_ingreso" id="f-res-fingreso" max="<?= date('Y-m-d') ?>" style="width:100%;box-sizing:border-box">
+                </div>
+                <div>
+                    <label style="font-size:13px;font-weight:600">Nivel de actividad</label>
+                    <select name="nivel_actividad" id="f-res-nivel" style="width:100%;box-sizing:border-box">
+                        <option value="">Sin especificar</option>
+                        <option value="activo">Activo (se mueve solo)</option>
+                        <option value="asistido">Asistido (necesita ayuda)</option>
+                        <option value="reducido">Reducido (poca movilidad)</option>
+                        <option value="postrado">Postrado (en cama)</option>
+                    </select>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;padding-bottom:4px">
                     <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -549,12 +724,35 @@ $camas_modal        = $pdo->query("SELECT * FROM camas WHERE estado='disponible'
 
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
                 <div>
-                    <label style="font-size:13px;font-weight:600">Nombre del familiar</label>
+                    <label style="font-size:13px;font-weight:600">Familiar responsable</label>
                     <input name="contacto_familiar" id="f-res-familiar" placeholder="Nombre y apellido" style="width:100%;box-sizing:border-box">
                 </div>
                 <div>
-                    <label style="font-size:13px;font-weight:600">Teléfono del familiar</label>
+                    <label style="font-size:13px;font-weight:600">Grado de parentesco</label>
+                    <select name="parentesco_familiar" id="f-res-parentesco" style="width:100%;box-sizing:border-box">
+                        <option value="">Sin especificar</option>
+                        <option value="Hijo/a">Hijo/a</option>
+                        <option value="Nieto/a">Nieto/a</option>
+                        <option value="Cónyuge">Cónyuge</option>
+                        <option value="Hermano/a">Hermano/a</option>
+                        <option value="Sobrino/a">Sobrino/a</option>
+                        <option value="Yerno/Nuera">Yerno/Nuera</option>
+                        <option value="Tutor/a legal">Tutor/a legal</option>
+                        <option value="Otro">Otro</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:13px;font-weight:600">Teléfono de contacto</label>
                     <input name="telefono_familiar" id="f-res-telefam" type="tel" style="width:100%;box-sizing:border-box">
+                </div>
+                <div>
+                    <label style="font-size:13px;font-weight:600">Cónyuge alojado en el hogar</label>
+                    <select name="id_conyuge" id="f-res-conyuge" class="buscador" style="width:100%;box-sizing:border-box">
+                        <option value="">No corresponde</option>
+                        <?php foreach ($residentes_para_conyuge as $rc): ?>
+                            <option value="<?= $rc['id_residente'] ?>"><?= h($rc['nombre'] . ' ' . $rc['apellido']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
             </div>
 
@@ -600,11 +798,17 @@ function abrirModalResidente(id, datos) {
     document.getElementById('f-res-fingreso').value = datos ? (datos.fecha_ingreso    || '') : '';
     document.getElementById('f-res-mov').checked    = datos ? !!parseInt(datos.movilidad_autonoma) : true;
     document.getElementById('f-res-fotoauth').checked = datos ? !!parseInt(datos.autorizado_foto)  : false;
+    document.getElementById('f-res-nivel').value    = datos ? (datos.nivel_actividad || '') : '';
     document.getElementById('f-res-familiar').value = datos ? (datos.contacto_familiar || '') : '';
     document.getElementById('f-res-telefam').value  = datos ? (datos.telefono_familiar || '') : '';
     document.getElementById('f-res-diag').value     = datos ? (datos.diagnostico       || '') : '';
     document.getElementById('f-res-foto').value     = datos ? (datos.foto              || '') : '';
     document.getElementById('f-res-estado').value   = datos ? (datos.estado            || 'activo') : 'activo';
+    document.getElementById('f-res-sexo').value       = datos ? (datos.sexo                || '') : '';
+    document.getElementById('f-res-parentesco').value = datos ? (datos.parentesco_familiar || '') : '';
+    var selConyuge = document.getElementById('f-res-conyuge');
+    selConyuge.value = datos ? (datos.id_conyuge || '') : '';
+    if (window.refrescarBuscador) refrescarBuscador('id_conyuge');
 
     const bloqueImg = document.getElementById('bloque-foto-actual');
     const img       = document.getElementById('f-res-foto-img');
@@ -701,8 +905,8 @@ document.getElementById('form-residente').addEventListener('submit', function(e)
 
 <div id="modal-suspender" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
     <div style="background:var(--bg-surface);color:var(--text-main);border-radius:10px;padding:28px;width:100%;max-width:480px;position:relative">
-        <button onclick="cerrarModalSuspender()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)">×</button>
-        <h2 style="margin-top:0">Suspender servicio</h2>
+        <button onclick="cerrarModalSuspender()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)"></button>
+        <h2 style="margin-top:0">Marcar ausente</h2>
         <p id="suspender-nombre" style="color:var(--text-muted);margin-bottom:16px"></p>
         <p style="font-size:13px;background:#fff3cd;border-left:4px solid #ffc107;padding:10px 14px;border-radius:6px;margin-bottom:16px">
 La cama <b>no se libera</b>. Solo se pausan las medicaciones activas del residente.
@@ -710,16 +914,60 @@ La cama <b>no se libera</b>. Solo se pausan las medicaciones activas del residen
         <form id="form-suspender" method="get" action="listar.php">
             <input type="hidden" name="accion" value="pausado">
             <input type="hidden" name="id" id="suspender-id">
-            <label>Motivo <span style="color:red">*</span></label>
+            <label>Tipo de ausencia <span style="color:red">*</span></label>
+            <select name="tipo_motivo" id="suspender-tipo" required>
+                <option value="internacion">Internación</option>
+                <option value="vacaciones">Vacaciones / salida con la familia</option>
+                <option value="ausencia_temporal">Otra ausencia temporal</option>
+                <option value="otro">Otro</option>
+            </select>
+            <label>Detalle del motivo <span style="color:red">*</span></label>
             <input name="motivo" id="suspender-motivo" required minlength="5">
             <label>Fecha estimada de regreso <span style="color:#aaa">(opcional)</span></label>
             <input type="date" name="fecha_fin" id="suspender-fecha" min="<?= date('Y-m-d') ?>">
             <br><br>
-            <button type="submit" class="btn orange">Suspender servicio</button>
+            <button type="submit" class="btn orange">Marcar ausente</button>
             <button type="button" class="btn gray" onclick="cerrarModalSuspender()">Cancelar</button>
         </form>
     </div>
 </div>
+<div id="modal-baja" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:var(--bg-surface);color:var(--text-main);border-radius:10px;padding:28px;width:100%;max-width:480px;position:relative;max-height:90vh;overflow-y:auto">
+        <button onclick="cerrarModalBaja()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)"></button>
+        <h2 style="margin-top:0">Dar de baja</h2>
+        <p id="baja-nombre" style="color:var(--text-muted);margin-bottom:16px"></p>
+        <p style="font-size:13px;background:var(--bg-estado-problema);color:var(--text-estado-problema);border-left:4px solid var(--border-estado-problema);padding:10px 14px;border-radius:6px;margin-bottom:16px">
+            Se registra la fecha de egreso y <b>se libera la habitación y la cama</b>.
+        </p>
+        <form method="get" action="listar.php">
+            <input type="hidden" name="accion" value="baja">
+            <input type="hidden" name="id" id="baja-id">
+            <input type="hidden" name="confirmar_baja" value="1">
+
+            <label>Tipo de baja <span style="color:red">*</span></label>
+            <select name="tipo_motivo" id="baja-tipo" required onchange="avisoFallecimiento()">
+                <option value="">Elegir...</option>
+                <option value="fallecimiento">Fallecimiento</option>
+                <option value="traslado">Traslado a otra institución</option>
+                <option value="voluntaria">Retiro voluntario / familiar</option>
+                <option value="otro">Otro</option>
+            </select>
+
+            <div id="baja-aviso-certificado" style="display:none;font-size:13px;background:var(--bg-estado-alerta);color:var(--text-estado-alerta);border-left:4px solid var(--border-estado-alerta);padding:10px 14px;border-radius:6px;margin:12px 0">
+                Al guardar vas a ir directo a la ficha para <b>adjuntar el certificado de defunción</b>
+                en la sección de documentación.
+            </div>
+
+            <label>Motivo <span style="color:red">*</span></label>
+            <textarea name="motivo" id="baja-motivo" rows="3" required minlength="5"></textarea>
+
+            <br><br>
+            <button type="submit" class="btn red">Confirmar baja</button>
+            <button type="button" class="btn gray" onclick="cerrarModalBaja()">Cancelar</button>
+        </form>
+    </div>
+</div>
+
 <script>
 function abrirModalSuspender(id, nombre) {
     document.getElementById('suspender-id').value    = id;
@@ -731,6 +979,22 @@ function abrirModalSuspender(id, nombre) {
 function cerrarModalSuspender() {
     document.getElementById('modal-suspender').style.display = 'none';
 }
+
+function abrirModalBaja(id, nombre) {
+    document.getElementById('baja-id').value = id;
+    document.getElementById('baja-nombre').textContent = 'Residente: ' + nombre;
+    document.getElementById('baja-motivo').value = '';
+    document.getElementById('baja-tipo').value = '';
+    avisoFallecimiento();
+    document.getElementById('modal-baja').style.display = 'flex';
+}
+function cerrarModalBaja() {
+    document.getElementById('modal-baja').style.display = 'none';
+}
+function avisoFallecimiento() {
+    var esFallecimiento = document.getElementById('baja-tipo').value === 'fallecimiento';
+    document.getElementById('baja-aviso-certificado').style.display = esFallecimiento ? 'block' : 'none';
+}
 window.addEventListener('click', function(e) {
     const m = document.getElementById('modal-suspender');
     if (e.target === m) cerrarModalSuspender();
@@ -741,7 +1005,7 @@ window.addEventListener('click', function(e) {
 function copiarLink(url, btn) {
     navigator.clipboard.writeText(url).then(function() {
         var orig = btn.textContent;
-        btn.textContent = 'Copiado!';
+        btn.textContent = ' Copiado!';
         btn.style.background = '#27ae60';
         btn.style.color = '#fff';
         setTimeout(function() {
@@ -753,6 +1017,7 @@ function copiarLink(url, btn) {
 }
 </script>
 <?php include '../config/footer.php'; ?>
+
 
 
 

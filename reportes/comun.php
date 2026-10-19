@@ -170,7 +170,7 @@ function vista_impresion($titulo, $subtitulo, $cols, $filas, $bloques = null) {
 <body onload="window.print()">
     <h1><?= h($titulo) ?></h1>
     <p class="sub"><?= h($subtitulo) ?></p>
-    <p class="marca">GestHogar (Hogar Nongo) · Generado el <?= date('d/m/Y H:i') ?> por <?= h($_SESSION['usuario']['nombre'] ?? '') ?></p>
+    <p class="marca"><?= h(datos_institucion() ?: 'GestHogar') ?> · Generado el <?= date('d/m/Y H:i') ?> por <?= h($_SESSION['usuario']['nombre'] ?? '') ?></p>
 
     <?php if ($bloques !== null): ?>
         <?php foreach ($bloques as $b): ?>

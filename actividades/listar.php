@@ -3,6 +3,18 @@ require_once '../config/session.php';
 require_once '../config/db.php';
 puede_cuidar();
 
+const TIPOS_ACTIVIDAD = [
+    'manualidades' => 'Manualidades',
+    'yoga'         => 'Yoga / gimnasia suave',
+    'caminata'     => 'Caminata',
+    'musica'       => 'Música / canto',
+    'juegos'       => 'Juegos de mesa',
+    'lectura'      => 'Lectura',
+    'huerta'       => 'Huerta / jardinería',
+    'celebracion'  => 'Celebración / cumpleaños',
+    'otra'         => 'Otra',
+];
+
 $upload_dir = __DIR__ . '/../uploads/actividades/';
 if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
 
@@ -49,24 +61,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['nueva_actividad'])) {
         }
     }
 
+    $tipo_act = $_POST['tipo_actividad'] ?? 'otra';
+    if (!array_key_exists($tipo_act, TIPOS_ACTIVIDAD)) $tipo_act = 'otra';
+
     if ($error) {
         header('Location: listar.php?toast=' . urlencode($error) . '&tipo=error'); exit;
     }
 
-    $pdo->prepare("
-        INSERT INTO actividades (id_usuario, nombre, descripcion, fecha, foto, observaciones)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ")->execute([uid(), $nombre, $desc ?: null, $fecha, $foto_path, $obs ?: null]);
+    try {
+        $pdo->prepare("
+            INSERT INTO actividades (id_usuario, nombre, tipo, descripcion, fecha, foto, observaciones)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ")->execute([uid(), $nombre, $tipo_act, $desc ?: null, $fecha, $foto_path, $obs ?: null]);
 
-    $id_act = $pdo->lastInsertId();
+        $id_act = $pdo->lastInsertId();
 
-    foreach ($partic as $id_res) {
-        $obs_part = trim($_POST['obs_participante'][$id_res] ?? '');
-        $pdo->prepare("INSERT INTO actividad_residentes (id_actividad, id_residente, observacion_participacion) VALUES (?,?,?)")
-            ->execute([$id_act, (int)$id_res, $obs_part ?: null]);
+        foreach ($partic as $id_res) {
+            $obs_part = trim($_POST['obs_participante'][$id_res] ?? '');
+            $pdo->prepare("INSERT INTO actividad_residentes (id_actividad, id_residente, observacion_participacion) VALUES (?,?,?)")
+                ->execute([$id_act, (int)$id_res, $obs_part ?: null]);
+        }
+        header('Location: listar.php?toast=Actividad+registrada+correctamente&tipo=ok');
+    } catch (PDOException $e) {
+        header('Location: listar.php?toast='.urlencode('Error al guardar la actividad. Intentá de nuevo.').'&tipo=error');
     }
-
-    header('Location: listar.php?toast=Actividad+registrada+correctamente&tipo=ok'); exit;
+    exit;
 }
 
 include '../config/menu.php';
@@ -77,7 +96,7 @@ $residentes = $pdo->query("
 ")->fetchAll();
 
 $actividades = $pdo->query("
-    SELECT a.*, u.nombre reg_por,
+    SELECT a.*, CONCAT(u.nombre,' ',COALESCE(u.apellido,'')) reg_por,
            GROUP_CONCAT(CONCAT(r.nombre,' ',r.apellido) SEPARATOR ', ') participantes
     FROM actividades a
     LEFT JOIN usuarios u ON u.id_usuario = a.id_usuario
@@ -95,6 +114,8 @@ $actividades = $pdo->query("
         + Registrar actividad
     </button>
 </div>
+
+
 
 
 <?php if (empty($actividades)): ?>
@@ -135,8 +156,9 @@ $actividades = $pdo->query("
             <td style="font-size:13px"><?= htmlspecialchars($a['observaciones'] ?? '') ?></td>
             <td><?= htmlspecialchars($a['reg_por'] ?? '') ?></td>
             <?php if (es_admin()): ?>
-            <td>
-                <a class="btn red" href="?baja=<?= $a['id_actividad'] ?>"
+            <td style="white-space:nowrap">
+                <a class="btn red" style="font-size:11px;padding:4px 8px;white-space:nowrap"
+                   href="?baja=<?= $a['id_actividad'] ?>"
                    onclick="return confirmarLink(this,'¿Dar de baja esta actividad?','Dar de baja','red')">
                    Dar de baja
                 </a>
@@ -161,6 +183,14 @@ $actividades = $pdo->query("
                 <div>
                     <label style="font-size:13px;font-weight:600">Nombre de la actividad *</label>
                     <input name="nombre" required style="width:100%;box-sizing:border-box">
+                </div>
+                <div>
+                    <label style="font-size:13px;font-weight:600">Tipo de actividad</label>
+                    <select name="tipo_actividad" style="width:100%;box-sizing:border-box">
+                        <?php foreach (TIPOS_ACTIVIDAD as $k => $v): ?>
+                            <option value="<?= $k ?>"><?= $v ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
                 <div>
                     <label style="font-size:13px;font-weight:600">Fecha *</label>

@@ -1,12 +1,33 @@
 <?php
 require_once '../config/session.php';
-puede_cuidar();
 require_once '../config/db.php';
+require_once __DIR__ . '/../config/accesos_prof.php';
+$seccion_actual = $seccion ?? '';
+$acceso_ok = es_admin() || es_cuidadora() || es_asistente();
+if (!$acceso_ok && es_profesional()) {
+    $acceso_ok = match($seccion_actual) {
+        'recetas'    => prof_puede_recetas($pdo),
+        'medicacion' => prof_puede_medicacion($pdo),
+        'tareas'     => prof_puede_tareas($pdo),
+        'agenda'     => prof_puede_medicacion($pdo),
+        default      => false,
+    };
+}
+if (!$acceso_ok) acceso_denegado('No tenés permisos para acceder a esta sección.');
 
 $seccion = $seccion ?? 'medicacion';
 
 function pagina_actual() {
     return basename($_SERVER['PHP_SELF']);
+}
+
+function pill_estado_med($e) {
+    return match($e) {
+        'administrado' => '<span class="pill pill-ok">Administrado</span>',
+        'no_pudo'      => '<span class="pill pill-aviso">No se pudo</span>',
+        'no_dado'      => '<span class="pill pill-mal">No administrado</span>',
+        default        => '<span class="pill pill-neutro">Sin registrar</span>',
+    };
 }
 
 function estado_label($e) {
@@ -81,46 +102,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion_tarea'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && es_admin()) {
 
     if (isset($_POST['nuevo_medicamento'])) {
-        $pdo->prepare('INSERT INTO medicamentos(nombre,presentacion,descripcion,created_by) VALUES(?,?,?,?)')
-            ->execute([$_POST['nombre'], $_POST['presentacion'], $_POST['descripcion'], uid()]);
-        volver_con_toast('Medicamento creado correctamente', 'ok');
+        $nombre_med = trim($_POST['nombre'] ?? '');
+        if (!$nombre_med) volver_con_toast('El nombre del medicamento es obligatorio.', 'error');
+        $dup = $pdo->prepare('SELECT COUNT(*) FROM medicamentos WHERE nombre=?');
+        $dup->execute([$nombre_med]);
+        if ($dup->fetchColumn() > 0) volver_con_toast('Ya existe un medicamento con ese nombre.', 'warn');
+        try {
+            $pdo->prepare('INSERT INTO medicamentos(nombre,presentacion,descripcion,created_by) VALUES(?,?,?,?)')
+                ->execute([$nombre_med, $_POST['presentacion'], $_POST['descripcion'], uid()]);
+            volver_con_toast('Medicamento creado correctamente', 'ok');
+        } catch (PDOException $e) {
+            volver_con_toast('Error al guardar el medicamento. Intentá de nuevo.', 'error');
+        }
     }
 
     if (isset($_POST['nueva_receta'])) {
-        $foto      = subir_receta();
-        $fecha_fin = trim($_POST['fecha_fin'] ?? '') ?: null;
-        $pdo->prepare('INSERT INTO recetas_medicas(id_residente,diagnostico,indicaciones_generales,fecha_inicio,fecha_fin,foto_receta,created_by) VALUES(?,?,?,?,?,?,?)')
-            ->execute([$_POST['id_residente'], $_POST['diagnostico'], $_POST['indicaciones_generales'], $_POST['fecha_inicio'], $fecha_fin, $foto, uid()]);
-        $id_receta = $pdo->lastInsertId();
-        $horarios  = preg_split('/[,;\n]+/', $_POST['horarios']);
-        foreach ($horarios as $h) {
-            $h = trim($h); if ($h === '') continue;
-            $pdo->prepare('INSERT INTO medicacion_residente(id_receta,id_residente,id_medicamento,dosis,horario,indicacion,fecha_inicio,fecha_fin,created_by) VALUES(?,?,?,?,?,?,?,?,?)')
-                ->execute([$id_receta, $_POST['id_residente'], $_POST['id_medicamento'], $_POST['dosis'], $h, $_POST['indicacion'], $_POST['fecha_inicio'], $fecha_fin, uid()]);
+        $id_res_r = (int)$_POST['id_residente'];
+        $diag_r   = trim($_POST['diagnostico'] ?? '');
+        $dosis_r  = trim($_POST['dosis'] ?? '');
+        $hors_r   = trim($_POST['horarios'] ?? '');
+        if (!$id_res_r) volver_con_toast('Seleccioná un residente.', 'error');
+        if (!$diag_r)   volver_con_toast('El diagnóstico / motivo es obligatorio.', 'error');
+        if (!$dosis_r)  volver_con_toast('La dosis es obligatoria.', 'error');
+        if (!$hors_r)   volver_con_toast('Ingresá al menos un horario.', 'error');
+        try {
+            $foto      = subir_receta();
+            $fecha_fin = trim($_POST['fecha_fin'] ?? '') ?: null;
+            $pdo->prepare('INSERT INTO recetas_medicas(id_residente,diagnostico,indicaciones_generales,fecha_inicio,fecha_fin,foto_receta,created_by) VALUES(?,?,?,?,?,?,?)')
+                ->execute([$id_res_r, $diag_r, $_POST['indicaciones_generales'], $_POST['fecha_inicio'], $fecha_fin, $foto, uid()]);
+            $id_receta = $pdo->lastInsertId();
+            $horarios  = preg_split('/[,;\n]+/', $hors_r);
+            foreach ($horarios as $h) {
+                $h = trim($h); if ($h === '') continue;
+                $pdo->prepare('INSERT INTO medicacion_residente(id_receta,id_residente,id_medicamento,dosis,horario,id_responsable,indicacion,fecha_inicio,fecha_fin,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)')
+                    ->execute([$id_receta, $id_res_r, $_POST['id_medicamento'], $dosis_r, $h,
+                               $_POST['id_responsable'] ?: null,
+                               $_POST['indicacion'], $_POST['fecha_inicio'], $fecha_fin, uid()]);
+            }
+            volver_con_toast('Receta y horarios creados correctamente', 'ok');
+        } catch (PDOException $e) {
+            volver_con_toast('Error al guardar la receta. Verificá los datos e intentá de nuevo.', 'error');
         }
-        volver_con_toast('Receta y horarios creados', 'ok');
     }
 
     if (isset($_POST['nueva_tarea'])) {
-        $pdo->prepare('INSERT INTO tareas_residente(id_residente,titulo,descripcion,horario,tipo,created_by) VALUES(?,?,?,?,?,?)')
-            ->execute([$_POST['id_residente'], $_POST['titulo'], $_POST['descripcion'], $_POST['horario'], $_POST['tipo_tarea'] ?? 'fija', uid()]);
-        volver_con_toast('Tarea creada correctamente', 'ok');
+        $titulo_t = trim($_POST['titulo'] ?? '');
+        $id_res_t = (int)$_POST['id_residente'];
+        if (!$id_res_t)  volver_con_toast('Seleccioná un residente.', 'error');
+        if (!$titulo_t)  volver_con_toast('El nombre de la tarea es obligatorio.', 'error');
+        try {
+            $pdo->prepare('INSERT INTO tareas_residente(id_residente,titulo,descripcion,horario,tipo,created_by) VALUES(?,?,?,?,?,?)')
+                ->execute([$id_res_t, $titulo_t, $_POST['descripcion'], $_POST['horario'], $_POST['tipo_tarea'] ?? 'fija', uid()]);
+            volver_con_toast('Tarea creada correctamente', 'ok');
+        } catch (PDOException $e) {
+            volver_con_toast('Error al guardar la tarea. Intentá de nuevo.', 'error');
+        }
     }
 }
 
-if (isset($_GET['eliminar']) && es_admin()) {
+if (isset($_GET['eliminar']) && (es_admin() || (es_profesional() && prof_puede_medicacion($pdo)))) {
     $pdo->prepare("UPDATE medicacion_residente SET estado='baja', updated_by=? WHERE id_plan=?")
         ->execute([uid(), $_GET['eliminar']]);
     volver_con_toast('Plan de medicación dado de baja', 'warn', $_GET['residente'] ?? 0);
 }
-if (isset($_GET['eliminar_receta']) && es_admin()) {
+if (isset($_GET['eliminar_receta']) && (es_admin() || (es_profesional() && prof_puede_recetas($pdo)))) {
     $pdo->prepare("UPDATE recetas_medicas SET estado='finalizada', updated_by=? WHERE id_receta=?")
         ->execute([uid(), $_GET['eliminar_receta']]);
     $pdo->prepare("UPDATE medicacion_residente SET estado='baja', updated_by=? WHERE id_receta=?")
         ->execute([uid(), $_GET['eliminar_receta']]);
     volver_con_toast('Receta dada de baja', 'warn', $_GET['residente'] ?? 0);
 }
-if (isset($_GET['eliminar_tarea']) && es_admin()) {
+if (isset($_GET['eliminar_tarea']) && (es_admin() || (es_profesional() && prof_puede_tareas($pdo)))) {
     $pdo->prepare("UPDATE tareas_residente SET estado='baja', updated_by=? WHERE id_tarea=?")
         ->execute([uid(), $_GET['eliminar_tarea']]);
     volver_con_toast('Tarea dada de baja', 'warn', $_GET['residente'] ?? 0);
@@ -128,8 +180,14 @@ if (isset($_GET['eliminar_tarea']) && es_admin()) {
 
 include '../config/menu.php';
 
-$res  = $pdo->query("SELECT * FROM residentes WHERE estado='activo' ORDER BY apellido,nombre")->fetchAll();
+$res = es_profesional()
+    ? query_residentes($pdo, '*')
+    : $pdo->query("SELECT * FROM residentes WHERE estado='activo' ORDER BY apellido,nombre")->fetchAll();
 $meds = $pdo->query("SELECT * FROM medicamentos WHERE estado='activo' ORDER BY nombre")->fetchAll();
+
+$personal_med = $pdo->query("SELECT id_usuario, nombre, apellido, rol FROM usuarios
+    WHERE rol IN('cuidadora','asistente','admin') AND estado='activo'
+    ORDER BY FIELD(rol,'cuidadora','asistente','admin'), apellido, nombre")->fetchAll();
 
 $id_residente = isset($_GET['residente']) ? (int)$_GET['residente'] : 0;
 $debe_elegir  = (!es_admin() && $id_residente <= 0);
@@ -165,7 +223,7 @@ if (!$debe_elegir) {
             $whereRes ORDER BY r.apellido,mr.horario")->fetchAll();
 
         $hist = $pdo->query("SELECT am.*,r.nombre rn,r.apellido ra,m.nombre med,m.presentacion,
-            u.nombre cuidadora,mr.dosis,mr.horario,rec.diagnostico
+            CONCAT(u.nombre,' ',COALESCE(u.apellido,'')) cuidadora,mr.dosis,mr.horario,rec.diagnostico
             FROM administracion_medicacion am
             JOIN residentes r ON r.id_residente=am.id_residente
             JOIN medicamentos m ON m.id_medicamento=am.id_medicamento
@@ -242,13 +300,13 @@ function bloquear_si_falta_residente($debe_elegir, $titulo, $texto) {
 }
 
 function aviso_solo_lectura() {
-    if (es_admin()) return;
+    if (es_admin() || es_profesional()) return;
     echo '<div class="card"><b>Modo cuidadora/asistente:</b> solo podés ver lo asignado y confirmar. '
        . 'El sistema guarda tu nombre, fecha y hora automáticamente.</div>';
 }
 
 function barra_acciones_admin($botones) {
-    if (!es_admin()) return;
+    if (!es_admin() && !es_profesional()) return;
     ?>
     <div class="card">
         <h3 style="margin-top:0">Acciones de administración</h3>

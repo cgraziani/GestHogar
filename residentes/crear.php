@@ -13,6 +13,7 @@ $errores = [];
 if(empty(trim($_POST['nombre'])))   $errores[] = 'El nombre es obligatorio.';
 if(empty(trim($_POST['apellido']))) $errores[] = 'El apellido es obligatorio.';
 if(empty(trim($_POST['dni'])))      $errores[] = 'El DNI es obligatorio.';
+if(!in_array($_POST['sexo'] ?? '', ['F','M'], true)) $errores[] = 'Hay que indicar el sexo del residente.';
 
 if(!empty($_POST['dni']) && !preg_match('/^[0-9]{7,8}$/', trim($_POST['dni']))){
     $errores[] = 'El DNI debe tener entre 7 y 8 dígitos numéricos.';
@@ -44,6 +45,51 @@ if (!empty($_FILES['foto']['name'])) {
 
 $habitacion = $_POST['id_habitacion'] ?: null;
 $cama       = $_POST['id_cama']       ?: null;
+$sexo       = $_POST['sexo'];
+$id_conyuge = $_POST['id_conyuge'] ?: null;
+
+if ($habitacion) {
+    $hq = $pdo->prepare('SELECT numero, sexo_asignado, admite_pareja, habilitada, estado FROM habitaciones WHERE id_habitacion=?');
+    $hq->execute([$habitacion]);
+    $hab = $hq->fetch();
+
+    $rechazo = null;
+    if (!$hab) {
+        $rechazo = 'La habitación elegida no existe.';
+    } elseif (!$hab['habilitada']) {
+        $rechazo = 'La habitación ' . $hab['numero'] . ' está deshabilitada y no admite residentes.';
+    } elseif ($hab['estado'] === 'mantenimiento') {
+        $rechazo = 'La habitación ' . $hab['numero'] . ' está en mantenimiento.';
+    } elseif ($hab['sexo_asignado'] !== 'mixta' && $hab['sexo_asignado'] !== $sexo && !$hab['admite_pareja']) {
+        $rechazo = 'La habitación ' . $hab['numero'] . ' es solo para '
+                 . ($hab['sexo_asignado'] === 'F' ? 'mujeres' : 'varones') . '.';
+    }
+
+    if (!$rechazo) {
+        $oq = $pdo->prepare("SELECT id_residente, nombre, apellido, sexo FROM residentes
+                             WHERE id_habitacion=? AND estado IN('activo','pausado') AND id_residente != ?");
+        $oq->execute([$habitacion, (int)($_POST['id'] ?: 0)]);
+        foreach ($oq->fetchAll() as $otro) {
+            if ($otro['sexo'] && $otro['sexo'] !== $sexo) {
+                $es_pareja = $hab['admite_pareja'] && $id_conyuge && $id_conyuge == $otro['id_residente'];
+                if (!$es_pareja) {
+                    $rechazo = 'En la habitación ' . $hab['numero'] . ' ya está alojado/a '
+                             . $otro['nombre'] . ' ' . $otro['apellido'] . ', de distinto sexo. '
+                             . 'Si es un matrimonio, marcá la habitación como que admite pareja '
+                             . 'y elegí a esa persona como cónyuge.';
+                    break;
+                }
+            }
+        }
+    }
+
+    if ($rechazo) {
+        $_SESSION['error_form'] = $rechazo;
+        $_SESSION['form_data']  = $_POST;
+        header('Location: listar.php' . ($_POST['id'] ? '?abrir_modal=' . $_POST['id'] : '?abrir_modal=nuevo'));
+        exit;
+    }
+}
 
 if ($cama) {
     $cama_check = $pdo->prepare("SELECT estado FROM camas WHERE id_cama=?");
@@ -74,10 +120,13 @@ try {
             $pdo->prepare("UPDATE camas SET estado='disponible', updated_by=? WHERE id_cama=?")
                 ->execute([uid(), $ant['id_cama']]);
         }
-        $pdo->prepare('UPDATE residentes SET nombre=?,apellido=?,dni=?,fecha_nacimiento=?,fecha_ingreso=?,movilidad_autonoma=?,autorizado_foto=?,diagnostico=?,contacto_familiar=?,telefono_familiar=?,id_habitacion=?,id_cama=?,foto=?,estado=?,updated_by=? WHERE id_residente=?')
+        $nivel_act = in_array($_POST['nivel_actividad']??'', ['activo','asistido','reducido','postrado'])
+            ? $_POST['nivel_actividad'] : null;
+        $pdo->prepare('UPDATE residentes SET nombre=?,apellido=?,sexo=?,dni=?,fecha_nacimiento=?,fecha_ingreso=?,movilidad_autonoma=?,autorizado_foto=?,diagnostico=?,contacto_familiar=?,parentesco_familiar=?,telefono_familiar=?,id_habitacion=?,id_cama=?,id_conyuge=?,foto=?,nivel_actividad=?,estado=?,updated_by=? WHERE id_residente=?')
             ->execute([
                 trim($_POST['nombre']),
                 trim($_POST['apellido']),
+                $sexo,
                 trim($_POST['dni']),
                 $_POST['fecha_nacimiento'] ?: null,
                 $_POST['fecha_ingreso']    ?: null,
@@ -85,17 +134,22 @@ try {
                 isset($_POST['autorizado_foto'])    ? 1 : 0,
                 $_POST['diagnostico'],
                 $_POST['contacto_familiar'],
+                trim($_POST['parentesco_familiar'] ?? '') ?: null,
                 $_POST['telefono_familiar'],
-                $habitacion, $cama, $foto,
+                $habitacion, $cama, $id_conyuge, $foto,
+                $nivel_act,
                 $_POST['estado'],
                 uid(), $_POST['id']
             ]);
         header('Location: listar.php?toast=Residente+modificado+correctamente&tipo=ok');
     } else {
-        $pdo->prepare('INSERT INTO residentes(nombre,apellido,dni,fecha_nacimiento,fecha_ingreso,movilidad_autonoma,autorizado_foto,diagnostico,contacto_familiar,telefono_familiar,id_habitacion,id_cama,foto,estado,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        $nivel_act = in_array($_POST['nivel_actividad']??'', ['activo','asistido','reducido','postrado'])
+            ? $_POST['nivel_actividad'] : null;
+        $pdo->prepare('INSERT INTO residentes(nombre,apellido,sexo,dni,fecha_nacimiento,fecha_ingreso,movilidad_autonoma,autorizado_foto,diagnostico,contacto_familiar,parentesco_familiar,telefono_familiar,id_habitacion,id_cama,id_conyuge,foto,nivel_actividad,estado,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
             ->execute([
                 trim($_POST['nombre']),
                 trim($_POST['apellido']),
+                $sexo,
                 trim($_POST['dni']),
                 $_POST['fecha_nacimiento'] ?: null,
                 $_POST['fecha_ingreso']    ?: null,
@@ -103,9 +157,10 @@ try {
                 isset($_POST['autorizado_foto'])    ? 1 : 0,
                 $_POST['diagnostico'],
                 $_POST['contacto_familiar'],
+                trim($_POST['parentesco_familiar'] ?? '') ?: null,
                 $_POST['telefono_familiar'],
-                $habitacion, $cama, $foto,
-                'activo', uid()
+                $habitacion, $cama, $id_conyuge, $foto,
+                $nivel_act, 'activo', uid()
             ]);
         $nuevo_id = $pdo->lastInsertId();
 

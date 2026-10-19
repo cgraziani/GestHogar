@@ -3,264 +3,433 @@ require_once '../config/session.php';
 solo_admin();
 require_once '../config/db.php';
 
-function estado_hogar(PDO $pdo) {
-    $e = [];
+$hasta_g = $_GET['hasta'] ?? date('Y-m-d');
+$desde_g = $_GET['desde'] ?? date('Y-m-d', strtotime('-30 days'));
+if ($desde_g > $hasta_g) [$desde_g, $hasta_g] = [$hasta_g, $desde_g];
+$dt_desde = $desde_g . ' 00:00:00';
+$dt_hasta = $hasta_g . ' 23:59:59';
 
-    $e['traspasos'] = $pdo->query("SELECT t.id_traspaso, t.fecha_apertura, t.novedades,
-            us.nombre saliente, ue.nombre entrante
-        FROM traspaso_turno t
-        LEFT JOIN usuarios us ON us.id_usuario = t.id_usuario_saliente
-        LEFT JOIN usuarios ue ON ue.id_usuario = t.id_usuario_entrante
-        WHERE t.estado = 'pendiente'
-        ORDER BY COALESCE(t.fecha_apertura, t.created_at) DESC")->fetchAll();
 
-    $e['medicacion'] = $pdo->query("SELECT mr.id_plan, mr.horario, mr.dosis,
-            r.nombre rn, r.apellido ra, m.nombre med,
-            (mr.horario < CURTIME()) AS vencida
-        FROM medicacion_residente mr
-        JOIN residentes r   ON r.id_residente = mr.id_residente
-        JOIN medicamentos m ON m.id_medicamento = mr.id_medicamento
-        WHERE mr.estado = 'activo'
-        AND (mr.fecha_inicio IS NULL OR CURDATE() >= mr.fecha_inicio)
-        AND (mr.fecha_fin    IS NULL OR CURDATE() <= mr.fecha_fin)
-        AND NOT EXISTS (SELECT 1 FROM administracion_medicacion am
-                        WHERE am.id_plan = mr.id_plan AND DATE(am.fecha_hora) = CURDATE())
-        ORDER BY mr.horario")->fetchAll();
 
-    $e['incidentes'] = $pdo->query("SELECT i.id_incidente, i.fecha_hora, i.gravedad,
-            i.descripcion, r.nombre rn, r.apellido ra, u.nombre reporto
-        FROM incidentes i
-        JOIN residentes r    ON r.id_residente = i.id_residente
-        LEFT JOIN usuarios u ON u.id_usuario = i.id_usuario
-        WHERE i.estado = 'pendiente'
-        ORDER BY FIELD(i.gravedad,'grave','moderado','leve'), i.fecha_hora DESC")->fetchAll();
+$fuera_rango = $pdo->query("SELECT DISTINCT r.nombre, r.apellido, cc.tipo_control,
+    cc.valor, cc.unidad, cc.fecha_hora
+    FROM controles_clinicos cc
+    JOIN residentes r ON r.id_residente=cc.id_residente
+    JOIN rangos_control rc ON rc.tipo_control=cc.tipo_control
+    WHERE cc.fecha_hora >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+      AND (cc.valor < rc.valor_min OR cc.valor > rc.valor_max)
+    ORDER BY cc.fecha_hora DESC LIMIT 5")->fetchAll();
 
-    $e['visitas'] = $pdo->query("SELECT v.id_visita, v.nombre_visitante, v.apellido_visitante,
-            v.parentesco, v.hora_ingreso, r.nombre rn, r.apellido ra
-        FROM visitas v
-        JOIN residentes r ON r.id_residente = v.id_residente
-        WHERE v.estado = 'en_curso'
-        ORDER BY v.hora_ingreso")->fetchAll();
+$omisiones = $pdo->query("SELECT r.nombre, r.apellido, COUNT(*) omisiones
+    FROM administracion_medicacion am
+    JOIN residentes r ON r.id_residente=am.id_residente
+    WHERE am.estado_adm IN('no_pudo','no_dado')
+      AND am.fecha_hora >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    GROUP BY am.id_residente HAVING omisiones >= 3
+    ORDER BY omisiones DESC")->fetchAll();
 
-    $e['tareas'] = $pdo->query("SELECT tr.id_tarea, tr.titulo, tr.horario,
-            r.nombre rn, r.apellido ra,
-            (tr.horario < CURTIME()) AS vencida
-        FROM tareas_residente tr
-        JOIN residentes r ON r.id_residente = tr.id_residente
-        WHERE tr.estado = 'activo'
-        AND NOT EXISTS (SELECT 1 FROM administracion_tareas at
-                        WHERE at.id_tarea = tr.id_tarea AND DATE(at.fecha_hora) = CURDATE())
-        ORDER BY tr.horario")->fetchAll();
+$inc_graves = $pdo->query("SELECT r.nombre, r.apellido, i.tipo_incidente, i.fecha_hora
+    FROM incidentes i
+    JOIN residentes r ON r.id_residente=i.id_residente
+    WHERE i.gravedad='grave' AND i.estado='pendiente'
+    ORDER BY i.fecha_hora DESC LIMIT 5")->fetchAll();
 
-    $e['turno'] = $pdo->query("SELECT tp.hora_inicio, tp.hora_fin, u.nombre, u.apellido, u.rol, u.color
-        FROM turnos_programados tp
-        JOIN usuarios u ON u.id_usuario = tp.id_cuidadora_usuario
-        WHERE tp.estado = 'activo' AND tp.fecha = CURDATE()
-        ORDER BY tp.hora_inicio")->fetchAll();
+$traspasos_pend = $pdo->query("SELECT COUNT(*) FROM traspaso_turno WHERE estado='pendiente'")->fetchColumn();
 
-    return $e;
+$adhesion_semanas = $pdo->prepare("SELECT
+    DATE_FORMAT(DATE_SUB(fecha_hora, INTERVAL WEEKDAY(fecha_hora) DAY),'%d/%m') semana,
+    ROUND(SUM(estado_adm='administrado')*100/COUNT(*)) porc
+    FROM administracion_medicacion
+    WHERE fecha_hora BETWEEN ? AND ?
+    GROUP BY semana ORDER BY MIN(fecha_hora)");
+$adhesion_semanas->execute([$dt_desde, $dt_hasta]);
+$adhesion_semanas = $adhesion_semanas->fetchAll();
+
+$tareas_res = $pdo->prepare("SELECT r.nombre, r.apellido,
+    COUNT(*) total,
+    SUM(at.estado_tarea='realizada') realizadas,
+    SUM(at.estado_tarea IN('no_realizada','no_pudo')) incumplidas
+    FROM administracion_tareas at
+    JOIN residentes r ON r.id_residente=at.id_residente
+    WHERE at.fecha_hora BETWEEN ? AND ?
+    GROUP BY at.id_residente ORDER BY r.apellido");
+$tareas_res->execute([$dt_desde, $dt_hasta]);
+$tareas_res = $tareas_res->fetchAll();
+
+$inc_mes = $pdo->prepare("SELECT
+    DATE_FORMAT(fecha_hora,'%m/%Y') mes,
+    COUNT(*) total,
+    SUM(gravedad='leve') leves,
+    SUM(gravedad='moderado') moderados,
+    SUM(gravedad='grave') graves
+    FROM incidentes WHERE fecha_hora BETWEEN ? AND ?
+    GROUP BY mes ORDER BY MIN(fecha_hora)");
+$inc_mes->execute([$dt_desde, $dt_hasta]);
+$inc_mes = $inc_mes->fetchAll();
+
+$inc_grav = $pdo->prepare("SELECT
+    SUM(gravedad='leve') leves,
+    SUM(gravedad='moderado') moderados,
+    SUM(gravedad='grave') graves,
+    COUNT(*) total
+    FROM incidentes WHERE fecha_hora BETWEEN ? AND ?");
+$inc_grav->execute([$dt_desde, $dt_hasta]);
+$inc_grav = $inc_grav->fetch();
+
+$vis_tipo = $pdo->prepare("SELECT tipo_visita, COUNT(*) n
+    FROM visitas
+    WHERE COALESCE(hora_ingreso,fecha_programada,created_at) BETWEEN ? AND ?
+    GROUP BY tipo_visita ORDER BY n DESC");
+$vis_tipo->execute([$dt_desde, $dt_hasta]);
+$vis_tipo = $vis_tipo->fetchAll();
+
+$vis_dia = $pdo->prepare("SELECT
+    DAYOFWEEK(COALESCE(hora_ingreso,fecha_programada,created_at)) n_dia,
+    DAYNAME(COALESCE(hora_ingreso,fecha_programada,created_at)) dia_en,
+    COUNT(*) total
+    FROM visitas
+    WHERE COALESCE(hora_ingreso,fecha_programada,created_at) BETWEEN ? AND ?
+    GROUP BY n_dia, dia_en ORDER BY n_dia");
+$vis_dia->execute([$dt_desde, $dt_hasta]);
+$vis_dia = $vis_dia->fetchAll();
+$dias_es = ['Sunday'=>'Dom','Monday'=>'Lun','Tuesday'=>'Mar','Wednesday'=>'Mié',
+    'Thursday'=>'Jue','Friday'=>'Vie','Saturday'=>'Sáb'];
+
+$act_res = $pdo->prepare("SELECT r.nombre, r.apellido, COUNT(*) actividades
+    FROM actividad_residentes ar
+    JOIN residentes r ON r.id_residente=ar.id_residente
+    JOIN actividades a ON a.id_actividad=ar.id_actividad
+    WHERE a.fecha BETWEEN ? AND ? AND a.estado='activo'
+    GROUP BY ar.id_residente ORDER BY actividades DESC");
+$act_res->execute([$dt_desde, $dt_hasta]);
+$act_res = $act_res->fetchAll();
+
+$trp_semana = $pdo->prepare("SELECT
+    DATE_FORMAT(DATE_SUB(COALESCE(fecha_cierre,created_at),
+        INTERVAL WEEKDAY(COALESCE(fecha_cierre,created_at)) DAY),'%d/%m') semana,
+    SUM(estado='cerrado') cerrados,
+    SUM(estado='pendiente') pendientes
+    FROM traspaso_turno
+    WHERE COALESCE(fecha_cierre,created_at) BETWEEN ? AND ?
+    GROUP BY semana ORDER BY MIN(COALESCE(fecha_cierre,created_at))");
+$trp_semana->execute([$dt_desde, $dt_hasta]);
+$trp_semana = $trp_semana->fetchAll();
+
+$ctrl_evol = $pdo->prepare("SELECT
+    r.nombre, r.apellido,
+    DATE_FORMAT(cc.fecha_hora,'%d/%m') fecha,
+    cc.valor, cc.tipo_control, cc.unidad
+    FROM controles_clinicos cc
+    JOIN residentes r ON r.id_residente=cc.id_residente
+    WHERE cc.fecha_hora BETWEEN ? AND ?
+    ORDER BY cc.tipo_control, cc.fecha_hora");
+$ctrl_evol->execute([$dt_desde, $dt_hasta]);
+
+$ctrl_por_tipo = [];
+foreach ($ctrl_evol->fetchAll() as $c) {
+    $tipo = $c['tipo_control'];
+    $ctrl_por_tipo[$tipo]['labels'][] = $c['fecha'];
+    $ctrl_por_tipo[$tipo]['values'][] = (float)$c['valor'];
+    $ctrl_por_tipo[$tipo]['unidad']   = $c['unidad'];
 }
 
-$e = estado_hogar($pdo);
+$rangos_ctrl = $pdo->query("SELECT tipo_control, valor_min, valor_max FROM rangos_control")->fetchAll();
+$rangos_ctrl_map = [];
+foreach ($rangos_ctrl as $r) $rangos_ctrl_map[$r['tipo_control']] = $r;
 
-$n = [
-    'traspasos'         => count($e['traspasos']),
-    'medicacion'        => count($e['medicacion']),
-    'medicacion_vencida'=> count(array_filter($e['medicacion'], fn($x) => $x['vencida'])),
-    'incidentes'        => count($e['incidentes']),
-    'incidentes_graves' => count(array_filter($e['incidentes'], fn($x) => $x['gravedad'] === 'grave')),
-    'visitas'           => count($e['visitas']),
-    'tareas'            => count($e['tareas']),
-    'tareas_vencidas'   => count(array_filter($e['tareas'], fn($x) => $x['vencida'])),
-];
-
-if (isset($_GET['json'])) {
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['conteos' => $n, 'hora' => date('H:i:s')], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+$ocup_hab = $pdo->query("SELECT h.numero,
+    (SELECT COUNT(*) FROM residentes r WHERE r.id_habitacion=h.id_habitacion AND r.estado='activo') ocupadas,
+    (SELECT COUNT(*) FROM camas c WHERE c.id_habitacion=h.id_habitacion AND c.estado!='mantenimiento') total
+    FROM habitaciones h WHERE h.habilitada=1 ORDER BY h.numero")->fetchAll();
 
 include '../config/menu.php';
 
-$hay_grave  = $n['incidentes_graves'] > 0 || $n['medicacion_vencida'] > 0;
-$hay_aviso  = $n['traspasos'] > 0 || $n['medicacion'] > 0 || $n['incidentes'] > 0 || $n['tareas_vencidas'] > 0;
-$estado_gen = $hay_grave ? ['Requiere atención inmediata', 'pill-mal']
-            : ($hay_aviso ? ['Hay pendientes por resolver', 'pill-aviso']
-                          : ['Todo al día', 'pill-ok']);
+$COLORES = ['#7eb8c9','#8cbf9e','#c4a97d','#a89ec0','#c98080','#82b5c0','#b5a87e','#9abfb5'];
 ?>
 
-<h1 style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    Estado del hogar
-    <span class="pill <?= $estado_gen[1] ?>"><?= h($estado_gen[0]) ?></span>
-</h1>
-<p class="small">
-    Actualizado a las <b id="hora-dato"><?= date('H:i:s') ?></b>.
-    Se refresca solo cada 30 segundos.
-    <a href="?" style="margin-left:8px">Actualizar ahora</a>
-</p>
+<h1>Dashboard</h1>
 
-<div class="grid">
-    <a href="<?= BASE_URL ?>/turnos/listar.php">
-        <div class="card" style="text-align:center">
-            <div class="stat" data-conteo="traspasos"><?= $n['traspasos'] ?></div>
-            <b>Traspasos sin cerrar</b><br>
-            <span class="small">La cuidadora entrante no confirmó</span>
+<div class="card no-imprimir" style="margin-bottom:20px">
+    <b style="display:block;margin-bottom:8px">Rango global</b>
+    <form method="get" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div>
+            <label style="font-size:13px;font-weight:600;display:block">Desde</label>
+            <input type="date" name="desde" value="<?= h($desde_g) ?>">
         </div>
-    </a>
-    <a href="<?= BASE_URL ?>/medicacion/listar.php">
-        <div class="card" style="text-align:center">
-            <div class="stat" data-conteo="medicacion"><?= $n['medicacion'] ?></div>
-            <b>Medicación sin registrar hoy</b><br>
-            <span class="small"><?= $n['medicacion_vencida'] ?> con el horario ya pasado</span>
+        <div>
+            <label style="font-size:13px;font-weight:600;display:block">Hasta</label>
+            <input type="date" name="hasta" value="<?= h($hasta_g) ?>">
         </div>
-    </a>
-    <a href="<?= BASE_URL ?>/incidentes/listar.php">
-        <div class="card" style="text-align:center">
-            <div class="stat" data-conteo="incidentes"><?= $n['incidentes'] ?></div>
-            <b>Incidentes sin revisar</b><br>
-            <span class="small"><?= $n['incidentes_graves'] ?> de gravedad alta</span>
-        </div>
-    </a>
-    <a href="<?= BASE_URL ?>/visitas/listar.php">
-        <div class="card" style="text-align:center">
-            <div class="stat" data-conteo="visitas"><?= $n['visitas'] ?></div>
-            <b>Visitas en curso</b><br>
-            <span class="small">Familiares dentro del hogar</span>
-        </div>
-    </a>
-    <a href="<?= BASE_URL ?>/medicacion/tareas.php">
-        <div class="card" style="text-align:center">
-            <div class="stat" data-conteo="tareas"><?= $n['tareas'] ?></div>
-            <b>Tareas sin registrar hoy</b><br>
-            <span class="small"><?= $n['tareas_vencidas'] ?> con el horario ya pasado</span>
-        </div>
-    </a>
+        <button type="submit" class="btn">Aplicar a todos</button>
+    </form>
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <a class="btn gray" href="?desde=<?=date('Y-m-d')?>&hasta=<?=date('Y-m-d')?>">Hoy</a>
+        <a class="btn gray" href="?desde=<?=date('Y-m-d',strtotime('-6 days'))?>&hasta=<?=date('Y-m-d')?>">7 días</a>
+        <a class="btn gray" href="?desde=<?=date('Y-m-d',strtotime('-29 days'))?>&hasta=<?=date('Y-m-d')?>">30 días</a>
+  
+    </div>
 </div>
 
-<?php if ($n['incidentes'] > 0): ?>
-<div class="card">
-    <h2 style="margin-top:0">Incidentes sin revisar</h2>
-    <table class="datatable">
-        <thead><tr><th>Fecha</th><th>Residente</th><th>Gravedad</th><th>Descripción</th><th>Reportó</th></tr></thead>
-        <tbody>
-        <?php foreach ($e['incidentes'] as $i): ?>
-            <tr>
-                <td><?= date('d/m/Y H:i', strtotime($i['fecha_hora'])) ?></td>
-                <td><?= h($i['rn'] . ' ' . $i['ra']) ?></td>
-                <td><span class="pill <?= $i['gravedad'] === 'grave' ? 'pill-mal' : ($i['gravedad'] === 'moderado' ? 'pill-aviso' : 'pill-ok') ?>"><?= h(ucfirst($i['gravedad'])) ?></span></td>
-                <td><?= h($i['descripcion']) ?></td>
-                <td><?= h($i['reporto'] ?: '') ?></td>
-            </tr>
-        <?php endforeach; ?>
-        </tbody>
-    </table>
-</div>
-<?php endif; ?>
 
-<?php if ($n['medicacion'] > 0): ?>
-<div class="card">
-    <h2 style="margin-top:0">Medicación de hoy sin registrar</h2>
-    <table class="datatable">
-        <thead><tr><th>Horario</th><th>Residente</th><th>Medicamento</th><th>Dosis</th><th>Situación</th></tr></thead>
-        <tbody>
-        <?php foreach ($e['medicacion'] as $m): ?>
-            <tr>
-                <td><b><?= h($m['horario']) ?></b></td>
-                <td><?= h($m['rn'] . ' ' . $m['ra']) ?></td>
-                <td><?= h($m['med']) ?></td>
-                <td><?= h($m['dosis']) ?></td>
-                <td><?= $m['vencida']
-                        ? '<span class="pill pill-mal">Horario pasado</span>'
-                        : '<span class="pill pill-neutro">Más tarde</span>' ?></td>
-            </tr>
-        <?php endforeach; ?>
-        </tbody>
-    </table>
-</div>
-<?php endif; ?>
 
-<?php if ($n['traspasos'] > 0): ?>
-<div class="card">
-    <h2 style="margin-top:0">Traspasos sin cerrar</h2>
-    <table class="datatable">
-        <thead><tr><th>Apertura</th><th>Sale</th><th>Entra</th><th>Novedades</th></tr></thead>
-        <tbody>
-        <?php foreach ($e['traspasos'] as $t): ?>
-            <tr>
-                <td><?= $t['fecha_apertura'] ? date('d/m/Y H:i', strtotime($t['fecha_apertura'])) : '' ?></td>
-                <td><?= h($t['saliente'] ?: '') ?></td>
-                <td><?= h($t['entrante'] ?: '') ?></td>
-                <td><?= h($t['novedades'] ?: 'Sin novedades') ?></td>
-            </tr>
-        <?php endforeach; ?>
-        </tbody>
-    </table>
-</div>
-<?php endif; ?>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
 
-<?php if ($n['visitas'] > 0): ?>
-<div class="card">
-    <h2 style="margin-top:0">Familiares en el hogar ahora</h2>
-    <table class="datatable">
-        <thead><tr><th>Visitante</th><th>Parentesco</th><th>Visita a</th><th>Entró</th></tr></thead>
-        <tbody>
-        <?php foreach ($e['visitas'] as $v): ?>
-            <tr>
-                <td><?= h(trim($v['nombre_visitante'] . ' ' . ($v['apellido_visitante'] ?? ''))) ?></td>
-                <td><?= h($v['parentesco']) ?></td>
-                <td><?= h($v['rn'] . ' ' . $v['ra']) ?></td>
-                <td><?= $v['hora_ingreso'] ? date('H:i', strtotime($v['hora_ingreso'])) : '' ?></td>
-            </tr>
-        <?php endforeach; ?>
-        </tbody>
-    </table>
-</div>
-<?php endif; ?>
-
-<div class="card">
-    <h2 style="margin-top:0">Personal de turno hoy</h2>
-    <?php if (!empty($e['turno'])): ?>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <?php foreach ($e['turno'] as $t): ?>
-            <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border-color);border-radius:10px;padding:8px 14px">
-                <span style="width:12px;height:12px;border-radius:50%;background:<?= h($t['color'] ?: '#888') ?>"></span>
-                <div>
-                    <b><?= h($t['nombre'] . ' ' . $t['apellido']) ?></b>
-                    <span class="badge"><?= h($t['rol']) ?></span><br>
-                    <span class="small"><?= h(substr($t['hora_inicio'], 0, 5)) ?> a <?= h(substr($t['hora_fin'], 0, 5)) ?></span>
-                </div>
-            </div>
-        <?php endforeach; ?>
-        </div>
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Adhesión a la medicación</b>
+    <?php if (empty($adhesion_semanas)): ?>
+        <p class="small" style="color:#aaa">Sin datos.</p>
+    <?php else: ?>
+    <canvas id="g-adhesion" height="180"></canvas>
     <?php endif; ?>
 </div>
 
-<?php if (!$hay_grave && !$hay_aviso): ?>
-<div class="card" style="text-align:center;border-left:4px solid var(--color-accent)">
-    <b>No hay nada pendiente.</b><br>
-    <span class="small">Traspasos cerrados, medicación registrada e incidentes revisados.</span>
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Tareas por residente</b>
+    <?php if (empty($tareas_res)): ?>
+        <p class="small" style="color:#aaa">Sin datos.</p>
+    <?php else: ?>
+    <canvas id="g-tareas" height="180"></canvas>
+    <?php endif; ?>
 </div>
+
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Incidentes por mes</b>
+    <?php if (empty($inc_mes)): ?>
+        <p class="small" style="color:#aaa">Sin datos.</p>
+    <?php else: ?>
+    <canvas id="g-incidentes" height="180"></canvas>
+    <?php endif; ?>
+</div>
+
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Gravedad de incidentes</b>
+    <?php if ((int)$inc_grav['total'] !== 0): ?>
+    <canvas id="g-gravedad" height="180"></canvas>
+    <?php endif; ?>
+</div>
+
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Visitas por tipo</b>
+    <?php if (empty($vis_tipo)): ?>
+        <p class="small" style="color:#aaa">Sin datos.</p>
+    <?php else: ?>
+    <canvas id="g-vis-tipo" height="180"></canvas>
+    <?php endif; ?>
+</div>
+
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Visitas por día de la semana</b>
+    <?php if (empty($vis_dia)): ?>
+        <p class="small" style="color:#aaa">Sin datos.</p>
+    <?php else: ?>
+    <canvas id="g-vis-dia" height="180"></canvas>
+    <?php endif; ?>
+</div>
+
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Actividades por residente</b>
+    <?php if (empty($act_res)): ?>
+        <p class="small" style="color:#aaa">Sin datos.</p>
+    <?php else: ?>
+    <canvas id="g-actividades" height="180"></canvas>
+    <?php endif; ?>
+</div>
+
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Traspasos de turno</b>
+    <?php if (empty($trp_semana)): ?>
+        <p class="small" style="color:#aaa">Sin datos.</p>
+    <?php else: ?>
+    <canvas id="g-traspasos" height="180"></canvas>
+    <?php endif; ?>
+</div>
+
+<?php
+$cfg_ctl_dash = [
+    'tension_sistolica'   => ['label'=>'Tensión sistólica',   'color'=>'#c98080'],
+    'tension_diastolica'  => ['label'=>'Tensión diastólica',  'color'=>'#7eb8c9'],
+    'glucemia'            => ['label'=>'Glucemia',             'color'=>'#c4a97d'],
+    'saturacion_oxigeno'  => ['label'=>'Saturación O₂',       'color'=>'#8cbf9e'],
+    'frecuencia_cardiaca' => ['label'=>'Frec. cardíaca',       'color'=>'#a89ec0'],
+    'temperatura'         => ['label'=>'Temperatura',          'color'=>'#e67e22'],
+    'peso'                => ['label'=>'Peso',                 'color'=>'#2D9B8A'],
+];
+foreach ($ctrl_por_tipo as $tipo_ctl => $g_ctl):
+    $cfg_c = $cfg_ctl_dash[$tipo_ctl] ?? ['label'=>$tipo_ctl,'color'=>'#7eb8c9'];
+    $cid   = 'g-ctl-'.$tipo_ctl;
+?>
+<div class="card" style="margin:0">
+    <b style="font-size:14px"><?= h($cfg_c['label']) ?> (<?= h($g_ctl['unidad']) ?>)</b>
+    <canvas id="<?= $cid ?>" height="180"></canvas>
+</div>
+<?php endforeach; ?>
+
+<div class="card" style="margin:0">
+    <b style="font-size:14px">Ocupación por habitación</b>
+    <?php if (empty($ocup_hab)): ?>
+        <p class="small" style="color:#aaa">Sin datos.</p>
+    <?php else: ?>
+    <canvas id="g-ocupacion" height="180"></canvas>
+    <?php endif; ?>
+</div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+var C = <?= json_encode($COLORES) ?>;
+var opts_base = { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } };
+
+<?php if (!empty($adhesion_semanas)): ?>
+new Chart(document.getElementById('g-adhesion'), {
+    type: 'line',
+    data: {
+        labels: <?= json_encode(array_column($adhesion_semanas,'semana')) ?>,
+        datasets: [{ label: 'Adhesión %',
+            data: <?= json_encode(array_column($adhesion_semanas,'porc')) ?>,
+            borderColor: '#7eb8c9', backgroundColor: 'rgba(126,184,201,.15)',
+            tension: .3, fill: true, pointRadius: 3 }]
+    },
+    options: { ...opts_base, scales: { y: { min:0, max:100, ticks:{ callback: v=>v+'%', font:{size:10} } } },
+        plugins: { legend: { display: false } } }
+});
 <?php endif; ?>
 
-<script>
-(function () {
-    var CADA = 30000;
-    function refrescar() {
-        fetch('dashboard.php?json=1', { credentials: 'same-origin' })
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-                var cambio = false;
-                document.querySelectorAll('[data-conteo]').forEach(function (el) {
-                    var nuevo = String(d.conteos[el.dataset.conteo]);
-                    if (el.textContent.trim() !== nuevo) { el.textContent = nuevo; cambio = true; }
-                });
-                document.getElementById('hora-dato').textContent = d.hora;
-                if (cambio) window.location.reload();
-            })
-            .catch(function () {  });
-    }
-    setInterval(refrescar, CADA);
-})();
+<?php if (!empty($tareas_res)): ?>
+new Chart(document.getElementById('g-tareas'), {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode(array_map(fn($r) => $r['nombre'].' '.$r['apellido'], $tareas_res)) ?>,
+        datasets: [
+            { label: 'Realizadas',  data: <?= json_encode(array_column($tareas_res,'realizadas')) ?>,  backgroundColor: '#8cbf9e' },
+            { label: 'Incumplidas', data: <?= json_encode(array_column($tareas_res,'incumplidas')) ?>, backgroundColor: '#c98080' }
+        ]
+    },
+    options: { ...opts_base, scales: { x:{stacked:true,ticks:{font:{size:10}}}, y:{stacked:true,ticks:{stepSize:1,font:{size:10}}} } }
+});
+<?php endif; ?>
+
+<?php if (!empty($inc_mes)): ?>
+new Chart(document.getElementById('g-incidentes'), {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode(array_column($inc_mes,'mes')) ?>,
+        datasets: [
+            { label: 'Leves',     data: <?= json_encode(array_column($inc_mes,'leves')) ?>,     backgroundColor: '#8cbf9e' },
+            { label: 'Moderados', data: <?= json_encode(array_column($inc_mes,'moderados')) ?>, backgroundColor: '#c4a97d' },
+            { label: 'Graves',    data: <?= json_encode(array_column($inc_mes,'graves')) ?>,    backgroundColor: '#c98080' }
+        ]
+    },
+    options: { ...opts_base, scales: { x:{stacked:true,ticks:{font:{size:10}}}, y:{stacked:true,ticks:{stepSize:1,font:{size:10}}} } }
+});
+<?php endif; ?>
+
+<?php if ((int)$inc_grav['total'] > 0): ?>
+new Chart(document.getElementById('g-gravedad'), {
+    type: 'doughnut',
+    data: {
+        labels: ['Leves','Moderados','Graves'],
+        datasets: [{ data: [<?= (int)$inc_grav['leves'] ?>,<?= (int)$inc_grav['moderados'] ?>,<?= (int)$inc_grav['graves'] ?>],
+            backgroundColor: ['#8cbf9e','#c4a97d','#c98080'], borderWidth: 1 }]
+    },
+    options: { ...opts_base, cutout: '60%' }
+});
+<?php endif; ?>
+
+<?php if (!empty($vis_tipo)): ?>
+new Chart(document.getElementById('g-vis-tipo'), {
+    type: 'doughnut',
+    data: {
+        labels: <?= json_encode(array_map(fn($v) => ucfirst(str_replace('_',' ',$v['tipo_visita'])), $vis_tipo)) ?>,
+        datasets: [{ data: <?= json_encode(array_column($vis_tipo,'n')) ?>,
+            backgroundColor: ['#7eb8c9','#8cbf9e','#c4a97d','#a89ec0','#c98080'], borderWidth: 1 }]
+    },
+    options: { ...opts_base, cutout: '55%' }
+});
+<?php endif; ?>
+
+<?php if (!empty($vis_dia)): ?>
+new Chart(document.getElementById('g-vis-dia'), {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode(array_map(fn($d) => $dias_es[$d['dia_en']] ?? $d['dia_en'], $vis_dia)) ?>,
+        datasets: [{
+            data: <?= json_encode(array_column($vis_dia,'total')) ?>,
+            backgroundColor: <?= json_encode(array_slice($COLORES,0,count($vis_dia))) ?>
+        }]
+    },
+    options: { ...opts_base, plugins:{ legend:{display:false} }, scales:{ y:{ ticks:{stepSize:1,font:{size:10}} } } }
+});
+<?php endif; ?>
+
+<?php if (!empty($act_res)): ?>
+new Chart(document.getElementById('g-actividades'), {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode(array_map(fn($r) => $r['nombre'], $act_res)) ?>,
+        datasets: [{ data: <?= json_encode(array_column($act_res,'actividades')) ?>,
+            backgroundColor: <?= json_encode(array_slice($COLORES,0,count($act_res))) ?> }]
+    },
+    options: { ...opts_base, indexAxis:'y', plugins:{legend:{display:false}},
+        scales:{ x:{ ticks:{stepSize:1,font:{size:10}} } } }
+});
+<?php endif; ?>
+
+<?php if (!empty($trp_semana)): ?>
+new Chart(document.getElementById('g-traspasos'), {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode(array_column($trp_semana,'semana')) ?>,
+        datasets: [
+            { label: 'Cerrados',   data: <?= json_encode(array_column($trp_semana,'cerrados')) ?>,   backgroundColor: '#8cbf9e' },
+            { label: 'Pendientes', data: <?= json_encode(array_column($trp_semana,'pendientes')) ?>, backgroundColor: '#c98080' }
+        ]
+    },
+    options: { ...opts_base, scales:{ x:{stacked:true,ticks:{font:{size:10}}}, y:{stacked:true,ticks:{stepSize:1,font:{size:10}}} } }
+});
+<?php endif; ?>
+
+<?php foreach ($ctrl_por_tipo as $tipo_ctl => $g_ctl):
+    $cfg_c = $cfg_ctl_dash[$tipo_ctl] ?? ['label'=>$tipo_ctl,'color'=>'#7eb8c9'];
+    $cid   = 'g-ctl-'.$tipo_ctl;
+    $rng_c = $rangos_ctrl_map[$tipo_ctl] ?? null;
+    $es_bar = $tipo_ctl === 'peso';
+?>
+new Chart(document.getElementById('<?= $cid ?>'), {
+    type: '<?= $es_bar ? 'bar' : 'line' ?>',
+    data: {
+        labels: <?= json_encode($g_ctl['labels']) ?>,
+        datasets: [
+            { label: <?= json_encode($cfg_c['label']) ?>, data: <?= json_encode($g_ctl['values']) ?>,
+              borderColor:'<?= $cfg_c['color'] ?>', backgroundColor:'<?= $es_bar ? $cfg_c['color'].'88' : $cfg_c['color'].'22' ?>',
+              tension:.3, pointRadius:2, fill:<?= $es_bar ? 'false' : 'true' ?> }
+            <?php if ($rng_c): ?>
+            ,{ label:'Máx', data:Array(<?= count($g_ctl['labels']) ?>).fill(<?= $rng_c['valor_max'] ?>),
+               borderColor:'rgba(231,76,60,.3)', borderDash:[5,5], pointRadius:0, fill:false, type:'line' }
+            ,{ label:'Mín', data:Array(<?= count($g_ctl['labels']) ?>).fill(<?= $rng_c['valor_min'] ?>),
+               borderColor:'rgba(39,174,96,.3)', borderDash:[5,5], pointRadius:0, fill:false, type:'line' }
+            <?php endif; ?>
+        ]
+    },
+    options: { ...opts_base, scales:{ y:{ticks:{font:{size:10}}}, x:{ticks:{font:{size:9},maxRotation:45}} } }
+});
+<?php endforeach; ?>
+
+<?php if (!empty($ocup_hab)): ?>
+new Chart(document.getElementById('g-ocupacion'), {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode(array_map(fn($h) => 'Hab.'.$h['numero'], $ocup_hab)) ?>,
+        datasets: [
+            { label: 'Ocupadas', data: <?= json_encode(array_column($ocup_hab,'ocupadas')) ?>,
+              backgroundColor: '#c98080' },
+            { label: 'Libres',   data: <?= json_encode(array_map(fn($h)=>max(0,(int)$h['total']-(int)$h['ocupadas']), $ocup_hab)) ?>,
+              backgroundColor: '#8cbf9e' }
+        ]
+    },
+    options: { ...opts_base, scales:{x:{stacked:true,ticks:{font:{size:10}}}, y:{stacked:true,ticks:{stepSize:1,font:{size:10}}}} }
+});
+<?php endif; ?>
 </script>
 
 <?php include '../config/footer.php'; ?>

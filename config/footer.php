@@ -1,4 +1,5 @@
 <?php
+
 ?>
 </main>
 </div>
@@ -211,7 +212,6 @@ function mostrarToast(mensaje, tipo) {
 
 <div id="modal-confirm-overlay">
     <div id="modal-confirm-box">
-        <div id="modal-confirm-icon"></div>
         <div id="modal-confirm-msg"></div>
         <div id="modal-confirm-btns">
             <button id="btn-confirm-cancel">Cancelar</button>
@@ -427,8 +427,12 @@ function mostrarToast(mensaje, tipo) {
     var formModificado = false;
     var submitando     = false;
 
-    document.addEventListener('input',  function(e) { if (e.target.form) formModificado = true; });
-    document.addEventListener('change', function(e) { if (e.target.form) formModificado = true; });
+    document.addEventListener('input',  function(e) {
+        if (e.target.form && !e.target.hasAttribute('onchange')) formModificado = true;
+    });
+    document.addEventListener('change', function(e) {
+        if (e.target.form && !e.target.hasAttribute('onchange')) formModificado = true;
+    });
 
     document.addEventListener('submit', function() {
         submitando = true;
@@ -552,7 +556,7 @@ function validarCampo(input) {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
             marcarError(input, 'Ingresá un email válido (ej: nombre@dominio.com).');
         } else {
-            marcarOk(input, 'Email válido');
+            marcarOk(input, ' Email válido');
         }
         return;
     }
@@ -561,7 +565,7 @@ function validarCampo(input) {
         if (!/^[0-9]{7,8}$/.test(val)) {
             marcarError(input, 'El DNI debe tener entre 7 y 8 dígitos numéricos.');
         } else {
-            marcarOk(input, 'DNI válido');
+            marcarOk(input, ' DNI válido');
         }
         return;
     }
@@ -579,7 +583,7 @@ function validarCampo(input) {
         if (val.length < 6) {
             marcarError(input, 'La contraseña debe tener al menos 6 caracteres. (' + val.length + '/6)');
         } else {
-            marcarOk(input, 'Contraseña válida');
+            marcarOk(input, ' Contraseña válida');
         }
         return;
     }
@@ -604,7 +608,7 @@ function validarCampo(input) {
             if (edad < 18) {
                 marcarError(input, 'La fecha indica menos de 18 años (' + edad + '). Verificá.');
             } else {
-                marcarOk(input, 'Fecha válida');
+                marcarOk(input, ' Fecha válida');
             }
         }
         return;
@@ -744,4 +748,5 @@ $(document).ready(function() {
 
 </body>
 </html>
+
 

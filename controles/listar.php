@@ -1,17 +1,12 @@
 <?php
 require_once '../config/session.php';
 require_once '../config/db.php';
-puede_cuidar();
+require_once '../config/db.php';
+require_once '../config/accesos_prof.php';
+if (!(es_admin() || es_cuidadora() || es_asistente() || (es_profesional() && prof_puede_controles($pdo))))
+    acceso_denegado('No tenés permisos para ver esta sección.');
 
-$rangos = [
-    'tension_sistolica'   => ['min'=>70,  'max'=>180, 'unidad'=>'mmHg'],
-    'tension_diastolica'  => ['min'=>40,  'max'=>120, 'unidad'=>'mmHg'],
-    'temperatura'         => ['min'=>34,  'max'=>41,  'unidad'=>'°C'],
-    'peso'                => ['min'=>30,  'max'=>200, 'unidad'=>'kg'],
-    'glucemia'            => ['min'=>50,  'max'=>400, 'unidad'=>'mg/dL'],
-    'saturacion_oxigeno'  => ['min'=>70,  'max'=>100, 'unidad'=>'%'],
-    'frecuencia_cardiaca' => ['min'=>40,  'max'=>180, 'unidad'=>'lpm'],
-];
+$rangos = rangos_control($pdo);
 
 $labels = [
     'tension_sistolica'   => 'Tensión sistólica',
@@ -23,103 +18,88 @@ $labels = [
     'frecuencia_cardiaca' => 'Frecuencia cardíaca',
 ];
 
-$toast = '';
-$toast_tipo = 'ok';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['nuevo_control'])) {
-    $id_res     = (int)$_POST['id_residente'];
-    $tipo       = trim($_POST['tipo_control'] ?? '');
-    $valor      = trim($_POST['valor'] ?? '');
-    $obs        = trim($_POST['observaciones'] ?? '');
-    $fecha_hora = trim($_POST['fecha_hora'] ?? date('Y-m-d H:i:s'));
-
-    $error = '';
-    if (!$id_res)                       $error = 'Seleccioná un residente.';
-    elseif (!isset($rangos[$tipo]))     $error = 'Tipo de control inválido.';
-    elseif (!is_numeric($valor))        $error = 'El valor debe ser numérico.';
-    elseif ((float)$valor < 0)          $error = 'El valor no puede ser negativo.';
-
-    if ($error) {
-        header('Location: controles_clinicos.php?toast=' . urlencode($error) . '&tipo=error');
-        exit;
-    }
-
-    $fuera_rango = false;
-    $r = $rangos[$tipo];
-    if ((float)$valor < $r['min'] || (float)$valor > $r['max']) {
-        $fuera_rango = true;
-    }
-
-    $pdo->prepare("
-        INSERT INTO controles_clinicos
-            (id_residente, id_usuario, tipo_control, valor, unidad, observaciones, fecha_hora)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ")->execute([
-        $id_res, uid(), $tipo, (float)$valor,
-        $rangos[$tipo]['unidad'],
-        $obs ?: null,
-        $fecha_hora
-    ]);
-
-    if ($fuera_rango) {
-        $msg = 'Control registrado. El valor ' . $valor . ' ' . $r['unidad'] . ' está fuera del rango esperado (' . $r['min'] . '–' . $r['max'] . ' ' . $r['unidad'] . '). Verificá con el médico.';
-        header('Location: controles_clinicos.php?toast=' . urlencode($msg) . '&tipo=warn');
-    } else {
-        header('Location: controles_clinicos.php?toast=Control+registrado+correctamente&tipo=ok');
-    }
-    exit;
-}
-
 include '../config/menu.php';
 
-$residentes = $pdo->query("SELECT id_residente, nombre, apellido FROM residentes WHERE estado='activo' ORDER BY apellido, nombre")->fetchAll();
-
+$residentes = es_profesional()
+    ? query_residentes($pdo)
+    : $pdo->query("SELECT id_residente, nombre, apellido FROM residentes WHERE estado='activo' ORDER BY apellido, nombre")->fetchAll();
 $id_residente = isset($_GET['residente']) ? (int)$_GET['residente'] : 0;
 $whereRes     = $id_residente ? ' AND cc.id_residente=' . $id_residente : '';
 
 $controles = $pdo->query("
     SELECT cc.*, r.nombre res_nombre, r.apellido res_apellido,
-           u.nombre registrado_por
+           CONCAT(u.nombre,' ',COALESCE(u.apellido,'')) registrado_por
     FROM controles_clinicos cc
     JOIN residentes r ON r.id_residente = cc.id_residente
     LEFT JOIN usuarios u ON u.id_usuario = cc.id_usuario
-    WHERE 1=1 $whereRes
+    WHERE cc.fecha_hora >= DATE_SUB(NOW(), INTERVAL 30 DAY) $whereRes
     ORDER BY cc.fecha_hora DESC
     LIMIT 200
 ")->fetchAll();
+
+$fuera_de_rango = array_filter($controles, function($c) use ($rangos) {
+    $r = $rangos[$c['tipo_control']] ?? null;
+    return $r && ((float)$c['valor'] < $r['min'] || (float)$c['valor'] > $r['max']);
+});
 ?>
 
 <style>
 .fuera-rango { background:#fff3cd; border-left:3px solid #e67e22 }
-.en-rango    { background:#d4edda; border-left:3px solid #28a745 }
 </style>
 
 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
     <h1 style="margin:0">Controles clínicos</h1>
-    <button class="btn" onclick="document.getElementById('modal-control').style.display='flex'">
-        + Registrar control
-    </button>
+    <a class="btn gray" href="<?= BASE_URL ?>/medicacion/agenda.php">← Agenda del turno</a>
 </div>
 
-<div style="margin-bottom:16px;display:flex;gap:10px;align-items:center">
+<div style="display:flex;gap:8px;margin-bottom:20px">
+    <?php if (es_admin()): ?>
+    <a class="tab-btn" href="plan.php<?= $id_residente ? '?residente='.$id_residente : '' ?>">
+Plan de controles
+    </a>
+    <?php endif; ?>
+    <a class="tab-btn active" href="listar.php<?= $id_residente ? '?residente='.$id_residente : '' ?>">
+Historial de controles
+    </a>
+</div>
+<style>
+.tab-btn{padding:8px 18px;border:2px solid var(--color-primary,#2D9B8A);background:transparent;
+    color:var(--color-primary,#2D9B8A);border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;text-decoration:none;transition:.2s}
+.tab-btn.active{background:var(--color-primary,#2D9B8A);color:#fff}
+</style>
+
+
+<?php if (!empty($fuera_de_rango)): ?>
+<div style="background:#fff3cd;border-left:4px solid #e67e22;padding:12px 16px;border-radius:6px;margin-bottom:16px;font-size:13px">
+Hay <b><?= count($fuera_de_rango) ?></b> valor<?= count($fuera_de_rango) > 1 ? 'es' : '' ?>
+    fuera de rango en los últimos 30 días. Verificá con el médico tratante.
+</div>
+<?php endif; ?>
+
+<div style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <label style="font-size:13px;font-weight:600">Filtrar por residente:</label>
-    <select class="buscador" onchange="window.location='controles_clinicos.php?residente='+this.value"
+    <select class="buscador"
+            onchange="window.location='listar.php?residente='+this.value"
             style="min-width:240px;padding:8px 12px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:14px">
-        <option value="0" <?= $id_residente==0?'selected':'' ?>>Todos los residentes</option>
+        <option value="0" <?= $id_residente == 0 ? 'selected' : '' ?>>Todos los residentes</option>
         <?php foreach ($residentes as $r): ?>
-            <option value="<?= $r['id_residente'] ?>" <?= $id_residente==$r['id_residente']?'selected':'' ?>>
-                <?= htmlspecialchars($r['nombre'].' '.$r['apellido']) ?>
+            <option value="<?= $r['id_residente'] ?>"
+                <?= $id_residente == $r['id_residente'] ? 'selected' : '' ?>>
+                <?= htmlspecialchars($r['nombre'] . ' ' . $r['apellido']) ?>
             </option>
         <?php endforeach; ?>
     </select>
     <?php if ($id_residente): ?>
-        <a href="controles_clinicos.php" class="btn gray">Limpiar filtro</a>
+        <a href="listar.php" class="btn gray">Ver todos</a>
+        <a href="<?= BASE_URL ?>/controles/plan.php?residente=<?= $id_residente ?>" class="btn gray">
+            Ver plan de controles
+        </a>
     <?php endif; ?>
 </div>
 
 <?php if (empty($controles)): ?>
     <div style="text-align:center;padding:40px;color:#aaa;background:var(--bg-surface);border-radius:10px">
-        <b>No hay controles clínicos registrados<?= $id_residente ? ' para este residente' : '' ?></b>
+        <b>No hay controles registrados en los últimos 30 días<?= $id_residente ? ' para este residente' : '' ?></b>
     </div>
 <?php else: ?>
 <table class="datatable">
@@ -128,8 +108,8 @@ $controles = $pdo->query("
             <th>Fecha y hora</th>
             <th>Residente</th>
             <th>Tipo de control</th>
-            <th>Valor</th>
-            <th>Rango esperado</th>
+            <th style="text-align:center">Valor</th>
+            <th style="text-align:center">Rango esperado</th>
             <th>Observaciones</th>
             <th>Registrado por</th>
         </tr>
@@ -143,15 +123,16 @@ $controles = $pdo->query("
     ?>
         <tr class="<?= $fuera ? 'fuera-rango' : '' ?>">
             <td><?= date('d/m/Y H:i', strtotime($c['fecha_hora'])) ?></td>
-            <td><?= htmlspecialchars($c['res_nombre'].' '.$c['res_apellido']) ?></td>
+            <td><?= htmlspecialchars($c['res_nombre'] . ' ' . $c['res_apellido']) ?></td>
             <td><?= htmlspecialchars($labels[$tipo] ?? $tipo) ?></td>
-            <td>
-                <b><?= number_format($valor, 2, ',', '.') ?> <?= htmlspecialchars($c['unidad']) ?></b>
+            <td style="text-align:center">
+                <b><?= number_format($valor, 2, ',', '.') ?>
+                   <?= htmlspecialchars($c['unidad']) ?></b>
                 <?php if ($fuera): ?>
-                    <span style="color:#e67e22;font-size:12px;margin-left:4px">Fuera de rango</span>
+                    <span style="color:#e67e22;font-size:11px;display:block">Fuera de rango</span>
                 <?php endif; ?>
             </td>
-            <td style="font-size:12px;color:#888">
+            <td style="text-align:center;font-size:12px;color:#888">
                 <?php if ($rango): ?>
                     <?= $rango['min'] ?> – <?= $rango['max'] ?> <?= $rango['unidad'] ?>
                 <?php else: ?><?php endif; ?>
@@ -164,102 +145,7 @@ $controles = $pdo->query("
 </table>
 <?php endif; ?>
 
-<div id="modal-control" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
-    <div style="background:var(--bg-surface);color:var(--text-main);border-radius:10px;padding:24px 28px;width:100%;max-width:520px;position:relative">
-        <button onclick="document.getElementById('modal-control').style.display='none'"
-                style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)">×</button>
-        <h2 style="margin:0 0 16px">Registrar control clínico</h2>
-
-        <p style="font-size:13px;background:#e8f4fd;border-left:4px solid #2980b9;padding:10px 14px;border-radius:6px;margin-bottom:16px">
-El registro es <b>inmutable</b>: una vez guardado no se puede modificar ni eliminar.
-        </p>
-
-        <form method="post">
-            <input type="hidden" name="nuevo_control" value="1">
-
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                <div>
-                    <label style="font-size:13px;font-weight:600">Residente *</label>
-                    <select name="id_residente" required class="buscador" style="width:100%;box-sizing:border-box">
-                        <option value="">Seleccioná...</option>
-                        <?php foreach ($residentes as $r): ?>
-                            <option value="<?= $r['id_residente'] ?>" <?= $id_residente==$r['id_residente']?'selected':'' ?>>
-                                <?= htmlspecialchars($r['nombre'].' '.$r['apellido']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div>
-                    <label style="font-size:13px;font-weight:600">Tipo de control *</label>
-                    <select name="tipo_control" id="sel-tipo" required onchange="actualizarUnidad()"
-                            style="width:100%;box-sizing:border-box">
-                        <option value="">Seleccioná...</option>
-                        <?php foreach ($labels as $val => $lbl): ?>
-                            <option value="<?= $val ?>" data-unidad="<?= $rangos[$val]['unidad'] ?>"
-                                    data-min="<?= $rangos[$val]['min'] ?>" data-max="<?= $rangos[$val]['max'] ?>">
-                                <?= $lbl ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-            </div>
-
-            <div style="display:grid;grid-template-columns:1fr 100px 1fr;gap:12px;margin-top:10px">
-                <div>
-                    <label style="font-size:13px;font-weight:600">Valor *</label>
-                    <input type="number" name="valor" id="inp-valor" step="0.01" min="0" required style="width:100%;box-sizing:border-box"
-                           oninput="verificarRango()">
-                </div>
-                <div>
-                    <label style="font-size:13px;font-weight:600">Unidad</label>
-                    <input id="inp-unidad" readonly style="width:100%;box-sizing:border-box;background:#f0f0f0" placeholder="">
-                </div>
-                <div>
-                    <label style="font-size:13px;font-weight:600">Fecha y hora</label>
-                    <input type="datetime-local" name="fecha_hora" value="<?= date('Y-m-d\TH:i') ?>"
-                           style="width:100%;box-sizing:border-box">
-                </div>
-            </div>
-
-            <div id="aviso-rango" style="display:none;background:#fff3cd;border-left:4px solid #e67e22;padding:10px 14px;border-radius:6px;margin-top:10px;font-size:13px;color:#856404">
-El valor está fuera del rango esperado. El sistema lo guardará igual. Verificá con el médico.
-            </div>
-
-            <div style="margin-top:10px">
-                <label style="font-size:13px;font-weight:600">Observaciones <span style="color:#aaa;font-weight:400">(opcional)</span></label>
-                <textarea name="observaciones" rows="2"
-                          style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
-            </div>
-
-            <div style="margin-top:18px;display:flex;gap:10px">
-                <button type="submit" class="btn">Guardar</button>
-                <button type="button" class="btn gray"
-                        onclick="document.getElementById('modal-control').style.display='none'">Cancelar</button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<script>
-function actualizarUnidad() {
-    const sel = document.getElementById('sel-tipo');
-    const opt = sel.options[sel.selectedIndex];
-    document.getElementById('inp-unidad').value = opt.dataset.unidad || '';
-    verificarRango();
-}
-function verificarRango() {
-    const sel   = document.getElementById('sel-tipo');
-    const opt   = sel.options[sel.selectedIndex];
-    const valor = parseFloat(document.getElementById('inp-valor').value);
-    const min   = parseFloat(opt.dataset.min);
-    const max   = parseFloat(opt.dataset.max);
-    const aviso = document.getElementById('aviso-rango');
-    if (!isNaN(valor) && !isNaN(min) && (valor < min || valor > max)) {
-        aviso.style.display = 'block';
-    } else {
-        aviso.style.display = 'none';
-    }
-}
-</script>
-
 <?php include '../config/footer.php'; ?>
+
+
+

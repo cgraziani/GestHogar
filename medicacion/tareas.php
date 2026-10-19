@@ -12,13 +12,14 @@ require_once 'comun.php';
 <?php bloquear_si_falta_residente($debe_elegir, 'Tareas cerradas',
     'Elegí un residente en el selector de arriba para ver sus tareas de cuidado.'); ?>
 
-<?php barra_acciones_admin([['modal-tarea', '+ Crear tarea de cuidado']]); ?>
+<?php barra_acciones_admin([['modal-tarea', '+ Registrar tarea de cuidado']]); ?>
 
-<?php if (es_admin()): ?>
+<?php $puede_acc_tar = es_admin() || (es_profesional() && prof_puede_tareas($pdo)); ?>
+<?php if ($puede_acc_tar): ?>
 <div id="modal-tarea" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
     <div style="background:var(--bg-surface);border-radius:12px;padding:28px;width:100%;max-width:480px;position:relative;color:var(--text-main);max-height:90vh;overflow-y:auto">
         <button onclick="cerrarModalAdmin('modal-tarea')" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:inherit">×</button>
-        <h3 style="margin-top:0">Crear tarea de cuidado</h3>
+        <h3 style="margin-top:0">Registrar tarea de cuidado</h3>
         <form method="post">
             <input type="hidden" name="nueva_tarea" value="1">
             <label>Residente</label>
@@ -74,54 +75,27 @@ $tareas_vencidas = array_filter($tareas, function($t) {
     <?php sin_datos('No hay tareas de cuidado cargadas para mostrar.'); ?>
 <?php else: ?>
 <table class="datatable">
-    <thead><tr><th>Residente</th><th>Tarea</th><th>Tipo</th><th>Horario</th><th>Detalle</th><th>Último registro</th><th>Registrar estado</th></tr></thead>
+    <thead><tr>
+        <th>Residente</th><th>Tarea</th><th>Tipo</th><th>Horario</th><th>Detalle</th>
+        <?php if ($puede_acc_tar): ?><th>Acciones</th><?php endif; ?>
+    </tr></thead>
     <tbody>
-    <?php foreach ($tareas as $t):
-        $hora_tarea  = !empty($t['horario']) ? strtotime(date('Y-m-d') . ' ' . $t['horario']) : null;
-        $ya_paso     = $hora_tarea && $hora_tarea < time();
-        $sin_estado  = empty($t['ultimo_estado']) ||
-                       (!empty($t['ultimo_horario']) && date('Y-m-d', strtotime($t['ultimo_horario'])) < date('Y-m-d'));
-        $es_vencida  = $ya_paso && $sin_estado;
-    ?>
-        <tr style="<?= $es_vencida ? 'background:#fdecea;border-left:4px solid #E05C5C;' : '' ?>">
+    <?php foreach ($tareas as $t): ?>
+        <tr>
             <td><?= h($t['rn']) . ' ' . h($t['ra']) ?></td>
-            <td>
-                <?= htmlspecialchars($t['titulo']) ?>
-                <?php if ($es_vencida): ?>
-                    <span style="background:#E05C5C;color:#fff;font-size:11px;padding:2px 7px;border-radius:10px;margin-left:6px;font-weight:600">VENCIDA</span>
-                <?php endif; ?>
-            </td>
+            <td><b><?= htmlspecialchars($t['titulo']) ?></b></td>
             <td><span class="badge"><?= h($t['tipo']) ?></span></td>
-            <td><b style="<?= $es_vencida ? 'color:#E05C5C' : '' ?>"><?= $t['horario'] ?></b></td>
-            <td><?= htmlspecialchars($t['descripcion']) ?></td>
+            <td><b><?= $t['horario'] ?: '' ?></b></td>
+            <td><span class="small"><?= htmlspecialchars($t['descripcion'] ?: '') ?></span></td>
+            <?php if ($puede_acc_tar): ?>
             <td>
-                <?php if ($es_vencida && empty($t['ultimo_estado'])): ?>
-                    <div class="estado-cuadro" style="background:#fdecea;border:1px solid #E05C5C;color:#c0392b;padding:4px 10px;border-radius:6px;font-size:13px">
-Sin registrar
-                    </div>
-                <?php else: ?>
-                    <div class="estado-cuadro <?= estado_class($t['ultimo_estado']) ?>"><?= estado_label($t['ultimo_estado']) ?></div>
-                    <span class="small"><?= $t['ultimo_horario'] ?><?php if($t['ultimo_motivo']):?><br><?= htmlspecialchars($t['ultimo_motivo']) ?><?php endif;?></span>
-                <?php endif; ?>
+                <a class="btn red"
+                   href="?eliminar_tarea=<?= $t['id_tarea'] ?><?= sufijo_residente($id_residente) ?>"
+                   onclick="return confirmarLink(this,'¿Dar de baja esta tarea? Ya no aparecerá en la agenda del turno.','Dar de baja','red')">
+                   Dar de baja
+                </a>
             </td>
-            <td>
-                <form method="post" class="accion-unica">
-                    <input type="hidden" name="id_tarea"     value="<?= $t['id_tarea'] ?>">
-                    <input type="hidden" name="id_residente" value="<?= $t['id_residente'] ?>">
-                    <select name="accion_tarea" class="selector-accion" required>
-                        <option value="">Elegir estado</option>
-                        <option value="realizada">Realizada</option>
-                        <option value="no_pudo">No pude realizarla</option>
-                        <option value="no_realizada">No realizada</option>
-                    </select>
-                    <textarea name="motivo" class="motivo-js" placeholder="Motivo obligatorio" style="display:none"></textarea>
-                    <button class="btn">Guardar</button>
-                </form>
-                <?php if(es_admin()):?>
-                    <a class="btn red" href="?eliminar_tarea=<?= $t['id_tarea'] ?><?= sufijo_residente($id_residente) ?>"
-                       onclick="return confirmarLink(this,'¿Dar de baja esta tarea de cuidado?','Dar de baja','red')">Dar de baja</a>
-                <?php endif;?>
-            </td>
+            <?php endif; ?>
         </tr>
     <?php endforeach; ?>
     </tbody>

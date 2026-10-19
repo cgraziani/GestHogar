@@ -3,11 +3,32 @@ require_once '../config/session.php';
 require_once '../config/db.php';
 puede_cuidar();
 
+const TIPOS_INCIDENTE = [
+    'caida'            => 'Caída',
+    'lesion'           => 'Lesión / herida',
+    'descompensacion'  => 'Descompensación',
+    'atragantamiento'  => 'Atragantamiento',
+    'error_medicacion' => 'Error de medicación',
+    'conducta'         => 'Episodio de conducta',
+    'fuga'             => 'Salida sin aviso',
+    'otro'             => 'Otro',
+];
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['nuevo_incidente'])) {
     $id_res    = (int)$_POST['id_residente'];
     $desc      = trim($_POST['descripcion'] ?? '');
     $acciones  = trim($_POST['acciones_tomadas'] ?? '');
     $gravedad  = trim($_POST['gravedad'] ?? '');
+
+    $errores = [];
+    if (!$id_res)   $errores[] = 'Seleccioná un residente.';
+    if (!$desc)     $errores[] = 'La descripción del incidente es obligatoria.';
+    if (!$acciones) $errores[] = 'Las acciones tomadas son obligatorias.';
+    if (!in_array($gravedad, ['leve','moderado','grave'])) $errores[] = 'La gravedad es obligatoria.';
+    if (!empty($errores)) {
+        $_SESSION['error_form'] = implode(' | ', $errores);
+        header('Location: listar.php'); exit;
+    }
     $medico    = trim($_POST['medico_interviniente'] ?? '');
     $fecha     = trim($_POST['fecha_hora'] ?? date('Y-m-d H:i:s'));
 
@@ -22,23 +43,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['nuevo_incidente'])) {
         exit;
     }
 
+    $tipo_inc = $_POST['tipo_incidente'] ?? 'otro';
+    if (!array_key_exists($tipo_inc, TIPOS_INCIDENTE)) $tipo_inc = 'otro';
+
     $notificado = $gravedad === 'grave' ? 1 : 0;
 
-    $pdo->prepare("
-        INSERT INTO incidentes
-            (id_residente, id_usuario, descripcion, acciones_tomadas, gravedad,
-             medico_interviniente, fecha_hora, notificado_responsable)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ")->execute([
-        $id_res, uid(), $desc, $acciones, $gravedad,
-        $medico ?: null, $fecha, $notificado
-    ]);
-
-    $msg = $gravedad === 'grave'
-        ? 'Incidente grave registrado. Se activó la alerta en el dashboard de Carla.'
-        : 'Incidente registrado correctamente.';
-    $tipo = $gravedad === 'grave' ? 'warn' : 'ok';
-    header('Location: listar.php?toast=' . urlencode($msg) . '&tipo=' . $tipo);
+    try {
+        $pdo->prepare("
+            INSERT INTO incidentes
+                (id_residente, id_usuario, tipo_incidente, descripcion, acciones_tomadas, gravedad,
+                 medico_interviniente, fecha_hora, notificado_responsable)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $id_res, uid(), $tipo_inc, $desc, $acciones, $gravedad,
+            $medico ?: null, $fecha, $notificado
+        ]);
+        $msg  = $gravedad === 'grave'
+            ? 'Incidente grave registrado. Se activó la alerta en el dashboard.'
+            : 'Incidente registrado correctamente.';
+        $tipo = $gravedad === 'grave' ? 'warn' : 'ok';
+        header('Location: listar.php?toast='.urlencode($msg).'&tipo='.$tipo);
+    } catch (PDOException $e) {
+        $_SESSION['error_form'] = 'Error al guardar el incidente. Verificá los datos e intentá de nuevo.';
+        header('Location: listar.php');
+    }
     exit;
 }
 
@@ -51,25 +79,41 @@ if (isset($_GET['revisar']) && es_admin()) {
 
 include '../config/menu.php';
 
-$residentes = $pdo->query("SELECT id_residente, nombre, apellido FROM residentes WHERE estado='activo' ORDER BY apellido, nombre")->fetchAll();
+$residentes = $pdo->query("SELECT id_residente, nombre, apellido FROM residentes ORDER BY apellido, nombre")->fetchAll();
+$medicos_lista = $pdo->query("SELECT id_medico, nombre, apellido FROM medicos WHERE estado='activo' ORDER BY apellido")->fetchAll();
+$usuarios_lista = $pdo->query("SELECT id_usuario, nombre, apellido FROM usuarios WHERE estado='activo' ORDER BY nombre")->fetchAll();
 
-$id_residente = isset($_GET['residente']) ? (int)$_GET['residente'] : 0;
-$whereRes     = $id_residente ? ' AND i.id_residente=' . $id_residente : '';
+$id_residente  = isset($_GET['residente'])  ? (int)$_GET['residente']        : 0;
+$filtro_grav   = $_GET['gravedad']          ?? '';
+$filtro_estado = $_GET['estado_inc']        ?? '';
+$filtro_medico = $_GET['medico']            ?? '';
+$filtro_reg    = isset($_GET['registrado']) ? (int)$_GET['registrado']       : 0;
+$filtro_desde  = $_GET['desde']            ?? '';
+$filtro_hasta  = $_GET['hasta']            ?? '';
+
+$where = ' WHERE 1=1';
+if ($id_residente)  $where .= ' AND i.id_residente='.$id_residente;
+if ($filtro_grav)   $where .= ' AND i.gravedad='.$pdo->quote($filtro_grav);
+if ($filtro_estado) $where .= ' AND i.estado='.$pdo->quote($filtro_estado);
+if ($filtro_medico) $where .= ' AND i.medico_interviniente LIKE '.$pdo->quote('%'.$filtro_medico.'%');
+if ($filtro_reg)    $where .= ' AND i.id_usuario='.$filtro_reg;
+if ($filtro_desde)  $where .= ' AND DATE(i.fecha_hora)>='.$pdo->quote($filtro_desde);
+if ($filtro_hasta)  $where .= ' AND DATE(i.fecha_hora)<='.$pdo->quote($filtro_hasta);
 
 $incidentes = $pdo->query("
     SELECT i.*, r.nombre res_nombre, r.apellido res_apellido,
-           u.nombre registrado_por
+           CONCAT(u.nombre, ' ', COALESCE(u.apellido,'')) registrado_por
     FROM incidentes i
     JOIN residentes r ON r.id_residente = i.id_residente
     LEFT JOIN usuarios u ON u.id_usuario = i.id_usuario
-    WHERE 1=1 $whereRes
+    $where
     ORDER BY i.fecha_hora DESC
 ")->fetchAll();
 
 $graves_sin_revisar = array_filter($incidentes, fn($i) => $i['gravedad']==='grave' && $i['estado']==='pendiente');
 
 function gravedad_class($g) {
-    return match($g) { 'grave'=>'estado-problema', 'moderado'=>'estado-alerta', default=>'estado-pendiente' };
+    return match($g) { 'grave'=>'pill-mal', 'moderado'=>'pill-aviso', default=>'pill-neutro' };
 }
 function gravedad_label($g) {
     return match($g) { 'grave'=>'Grave', 'moderado'=>'Moderado', default=>'Leve' };
@@ -89,8 +133,15 @@ function gravedad_label($g) {
     </button>
 </div>
 
+<?php if (!empty($_SESSION['error_form'])): ?>
+<div style="background:#fdecea;border-left:4px solid #E05C5C;padding:12px 16px;border-radius:6px;margin-bottom:16px">
+<?= htmlspecialchars($_SESSION['error_form']); unset($_SESSION['error_form']); ?>
+</div>
+<?php endif; ?>
+
 <?php if (count($graves_sin_revisar) > 0): ?>
 <div style="background:#fdecea;border-left:5px solid #c0392b;padding:12px 18px;border-radius:8px;margin-bottom:16px;display:flex;gap:12px;align-items:center">
+    <span style="font-size:24px"></span>
     <div>
         <b style="color:#c0392b">Hay <?= count($graves_sin_revisar) ?> incidente<?= count($graves_sin_revisar)>1?'s':'' ?> grave<?= count($graves_sin_revisar)>1?'s':'' ?> sin revisar</b><br>
         <span style="font-size:13px;color:#555">Carla debe marcarlos como revisados desde este panel.</span>
@@ -98,26 +149,70 @@ function gravedad_label($g) {
 </div>
 <?php endif; ?>
 
-<div style="background:#e8f4fd;border-left:4px solid #2980b9;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px">
-Los incidentes son <b>registros inmutables</b>: una vez guardados no se pueden editar ni eliminar. Solo pueden marcarse como <b>Revisado</b> por la administradora.
-</div>
 
-<div style="margin-bottom:16px;display:flex;gap:10px;align-items:center">
-    <label style="font-size:13px;font-weight:600">Filtrar por residente:</label>
-    <select class="buscador" onchange="window.location='listar.php?residente='+this.value"
-            style="min-width:240px;padding:8px 12px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:14px">
-        <option value="0" <?= $id_residente==0?'selected':'' ?>>Todos</option>
-        <?php foreach ($residentes as $r): ?>
-            <option value="<?= $r['id_residente'] ?>" <?= $id_residente==$r['id_residente']?'selected':'' ?>>
-                <?= htmlspecialchars($r['nombre'].' '.$r['apellido']) ?>
-            </option>
-        <?php endforeach; ?>
-    </select>
-    <?php if ($id_residente): ?><a href="listar.php" class="btn gray">Limpiar</a><?php endif; ?>
+<div class="card no-imprimir" style="margin-bottom:16px">
+    <form method="get">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px">
+            <div>
+                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Residente</label>
+                <select name="residente" class="buscador" style="width:100%">
+                    <option value="0">Todos</option>
+                    <?php foreach ($residentes as $r): ?>
+                        <option value="<?= $r['id_residente'] ?>" <?= $id_residente==$r['id_residente']?'selected':'' ?>>
+                            <?= h($r['nombre'].' '.$r['apellido']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Registrado por</label>
+                <select name="registrado" class="buscador" style="width:100%">
+                    <option value="0">Todos</option>
+                    <?php foreach ($usuarios_lista as $u): ?>
+                        <option value="<?= $u['id_usuario'] ?>" <?= $filtro_reg==$u['id_usuario']?'selected':'' ?>>
+                            <?= h($u['nombre'].' '.($u['apellido']??'')) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div>
+                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Gravedad</label>
+                <select name="gravedad" style="width:130px">
+                    <option value="">Todas</option>
+                    <option value="leve"     <?= $filtro_grav==='leve'?'selected':'' ?>>Leve</option>
+                    <option value="moderado" <?= $filtro_grav==='moderado'?'selected':'' ?>>Moderado</option>
+                    <option value="grave"    <?= $filtro_grav==='grave'?'selected':'' ?>>Grave</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Estado</label>
+                <select name="estado_inc" style="width:130px">
+                    <option value="">Todos</option>
+                    <option value="activo"   <?= $filtro_estado==='activo'?'selected':'' ?>>Pendiente</option>
+                    <option value="revisado" <?= $filtro_estado==='revisado'?'selected':'' ?>>Revisado</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Desde</label>
+                <input type="date" name="desde" value="<?= h($filtro_desde) ?>" style="width:140px">
+            </div>
+            <div>
+                <label style="font-size:12px;font-weight:600;display:block;margin-bottom:3px">Hasta</label>
+                <input type="date" name="hasta" value="<?= h($filtro_hasta) ?>" style="width:140px">
+            </div>
+            <div style="display:flex;gap:8px">
+                <button type="submit" class="btn">Filtrar</button>
+                <a href="listar.php" class="btn gray">Limpiar</a>
+            </div>
+        </div>
+    </form>
 </div>
 
 <?php if (empty($incidentes)): ?>
     <div style="text-align:center;padding:40px;color:#aaa;background:var(--bg-surface);border-radius:10px">
+        <div style="font-size:40px;margin-bottom:8px"></div>
         <b>No hay incidentes registrados<?= $id_residente ? ' para este residente' : '' ?></b>
     </div>
 <?php else: ?>
@@ -126,44 +221,43 @@ Los incidentes son <b>registros inmutables</b>: una vez guardados no se pueden e
         <tr>
             <th>Fecha y hora</th>
             <th>Residente</th>
+            <th>Tipo</th>
             <th>Descripción</th>
             <th>Acciones tomadas</th>
             <th>Gravedad</th>
             <th>Médico</th>
             <th>Registrado por</th>
             <th>Estado</th>
-            <?php if (es_admin()): ?><th>Acción</th><?php endif; ?>
         </tr>
     </thead>
     <tbody>
-    <?php foreach ($incidentes as $i): ?>
-        <tr style="<?= $i['gravedad']==='grave' && $i['estado']==='pendiente' ? 'background:#fdecea' : '' ?>">
+    <?php foreach ($incidentes as $i):
+        $pendiente = $i['estado'] === 'activo' || $i['estado'] === 'pendiente';
+        $grave_pend = $i['gravedad']==='grave' && $pendiente;
+    ?>
+        <tr style="<?= $grave_pend ? 'background:#fdecea' : '' ?>">
             <td><?= date('d/m/Y H:i', strtotime($i['fecha_hora'])) ?></td>
-            <td><?= htmlspecialchars($i['res_nombre'].' '.$i['res_apellido']) ?></td>
-            <td style="max-width:250px"><?= htmlspecialchars($i['descripcion']) ?></td>
-            <td style="max-width:200px"><?= htmlspecialchars($i['acciones_tomadas']) ?></td>
+            <td><?= h($i['res_nombre'].' '.$i['res_apellido']) ?></td>
+            <td><span class="badge"><?= h(TIPOS_INCIDENTE[$i['tipo_incidente']] ?? $i['tipo_incidente']) ?></span></td>
+            <td style="max-width:220px;font-size:13px"><?= h($i['descripcion']) ?></td>
+            <td style="max-width:180px;font-size:13px"><?= h($i['acciones_tomadas']) ?></td>
             <td><span class="pill <?= gravedad_class($i['gravedad']) ?>"><?= gravedad_label($i['gravedad']) ?></span></td>
-            <td><?= htmlspecialchars($i['medico_interviniente'] ?: '') ?></td>
-            <td><?= htmlspecialchars($i['registrado_por'] ?? '') ?></td>
+            <td><span class="small"><?= h($i['medico_interviniente'] ?: '') ?></span></td>
+            <td><span class="small"><?= h($i['registrado_por'] ?? '') ?></span></td>
             <td>
-                <?php if ($i['estado'] === 'activo'): ?>
-                    <span class="pill estado-pendiente">Pendiente</span>
-                <?php else: ?>
-                    <span class="pill estado-ok">Revisado</span>
-                <?php endif; ?>
-            </td>
-            <?php if (es_admin()): ?>
-            <td>
-                <?php if ($i['estado'] === 'activo'): ?>
-                    <a class="btn green" href="?revisar=<?= $i['id_incidente'] ?>"
+                <?php if ($pendiente): ?>
+                    <span class="pill pill-aviso" style="display:block;margin-bottom:4px">Pendiente</span>
+                    <?php if (es_admin()): ?>
+                    <a class="btn green" style="font-size:11px;padding:3px 8px"
+                       href="?revisar=<?= $i['id_incidente'] ?>"
                        onclick="return confirmarLink(this,'¿Marcar este incidente como revisado?','Revisar','green')">
-                       Marcar revisado
+                        Marcar revisado
                     </a>
+                    <?php endif; ?>
                 <?php else: ?>
-                    <span style="font-size:12px;color:#aaa;font-style:italic">Inmutable</span>
+                    <span class="pill pill-ok"> Revisado</span>
                 <?php endif; ?>
             </td>
-            <?php endif; ?>
         </tr>
     <?php endforeach; ?>
     </tbody>
@@ -173,7 +267,7 @@ Los incidentes son <b>registros inmutables</b>: una vez guardados no se pueden e
 <div id="modal-incidente" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
     <div style="background:var(--bg-surface);color:var(--text-main);border-radius:10px;padding:24px 28px;width:100%;max-width:580px;position:relative">
         <button onclick="document.getElementById('modal-incidente').style.display='none'"
-                style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)">×</button>
+                style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-main)"></button>
         <h2 style="margin:0 0 8px">Registrar incidente</h2>
         <p style="font-size:13px;color:#888;margin:0 0 16px">El registro es inmutable. Una vez guardado no se puede modificar.</p>
 
@@ -191,6 +285,14 @@ Los incidentes son <b>registros inmutables</b>: una vez guardados no se pueden e
                     </select>
                 </div>
                 <div>
+                    <label style="font-size:13px;font-weight:600">Tipo de incidente *</label>
+                    <select name="tipo_incidente" required style="width:100%;box-sizing:border-box">
+                        <?php foreach (TIPOS_INCIDENTE as $k => $v): ?>
+                            <option value="<?= $k ?>"><?= $v ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
                     <label style="font-size:13px;font-weight:600">Gravedad *</label>
                     <select name="gravedad" required id="sel-gravedad" onchange="mostrarAvisoGrave()"
                             style="width:100%;box-sizing:border-box">
@@ -203,7 +305,7 @@ Los incidentes son <b>registros inmutables</b>: una vez guardados no se pueden e
             </div>
 
             <div id="aviso-grave" style="display:none;background:#fdecea;border-left:4px solid #c0392b;padding:10px 14px;border-radius:6px;margin-top:10px;font-size:13px;color:#c0392b">
-Al guardar este incidente como <b>Grave</b>, se activará una alerta automática en el dashboard de Carla.
+                 Al guardar este incidente como <b>Grave</b>, se activará una alerta automática en el dashboard de Carla.
             </div>
 
             <div style="margin-top:10px">

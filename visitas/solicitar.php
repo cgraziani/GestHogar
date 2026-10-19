@@ -22,29 +22,38 @@ if ($residente['estado'] === 'baja') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nombre      = trim($_POST['nombre'] ?? '');
-    $apellido    = trim($_POST['apellido'] ?? '');
-    $lazo        = trim($_POST['lazo'] ?? '');
-    $telefono    = trim($_POST['telefono'] ?? '');
-    $fecha_hora  = trim($_POST['fecha_hora'] ?? '');
-    $obs         = trim($_POST['observaciones'] ?? '');
+    $nombre     = trim($_POST['nombre']       ?? '');
+    $apellido   = trim($_POST['apellido']     ?? '');
+    $lazo       = trim($_POST['lazo']         ?? '');
+    $telefono   = trim($_POST['telefono']     ?? '');
+    $fecha_hora = trim($_POST['fecha_hora']   ?? '');
+    $obs        = trim($_POST['observaciones']?? '');
 
-    if (!$nombre || !$apellido || !$lazo || !$telefono || !$fecha_hora) {
-        $error = 'Por favor completá todos los campos obligatorios.';
-    } elseif (strtotime($fecha_hora) <= time()) {
+    if (!$nombre)     $error = 'El nombre del visitante es obligatorio.';
+    elseif (!$apellido)   $error = 'El apellido es obligatorio.';
+    elseif (!$lazo)       $error = 'El parentesco es obligatorio.';
+    elseif (!$telefono)   $error = 'El teléfono de contacto es obligatorio.';
+    elseif (!$fecha_hora) $error = 'La fecha y hora de visita es obligatoria.';
+
+    if (!$error && strtotime($fecha_hora) <= time()) {
         $error = 'La fecha y hora de la visita debe ser futura.';
-    } else {
-        $pdo->prepare("
-            INSERT INTO visitas (id_residente, nombre_visitante, apellido_visitante, parentesco,
-                                 telefono_visitante, hora_ingreso, observaciones, estado, fecha_solicitada,
-                                 created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'solicitada', NOW(), NOW())
-        ")->execute([
-            $residente['id_residente'],
-            $nombre, $apellido, $lazo, $telefono,
-            $fecha_hora, $obs ?: null
-        ]);
-        $enviado = true;
+    }
+    if (!$error) {
+        try {
+            $pdo->prepare("
+                INSERT INTO visitas (id_residente, nombre_visitante, apellido_visitante, parentesco,
+                                     telefono_visitante, hora_ingreso, observaciones, estado, fecha_solicitada,
+                                     created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'solicitada', NOW(), NOW())
+            ")->execute([
+                $residente['id_residente'],
+                $nombre, $apellido, $lazo, $telefono,
+                $fecha_hora, $obs ?: null
+            ]);
+            $enviado = true;
+        } catch (PDOException $e) {
+            $error = 'Error al registrar la visita. Intentá de nuevo.';
+        }
     }
 }
 ?>
@@ -103,6 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <div class="residente-pill">
         <b><?= htmlspecialchars($residente['nombre'] . ' ' . $residente['apellido']) ?></b>
+        <small>Solicitud de visita para este residente</small>
     </div>
 
     <?php if ($error): ?>
