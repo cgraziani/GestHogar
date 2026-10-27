@@ -1,0 +1,98 @@
+<?php
+// ============================================================
+// TAREAS DE CUIDADO
+// Tareas fijas y puntuales por residente, con registro de estado.
+// ============================================================
+$seccion = 'tareas';
+require_once 'comun.php';
+?>
+
+<h1>Tareas de cuidado</h1>
+
+<?php mostrar_mensaje_sesion(); ?>
+
+<?php card_seleccionar_residente($res, $id_residente, $res_sel); ?>
+
+<?php bloquear_si_falta_residente($debe_elegir, 'Tareas cerradas',
+    'Elegí un residente en el selector de arriba para ver sus tareas de cuidado.'); ?>
+
+<?php barra_acciones_admin([['modal-tarea', '+ Crear tarea de cuidado']]); ?>
+
+<?php if (es_admin()): ?>
+<!-- MODAL: Crear tarea -->
+<div id="modal-tarea" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:var(--bg-surface);border-radius:12px;padding:28px;width:100%;max-width:480px;position:relative;color:var(--text-main);max-height:90vh;overflow-y:auto">
+        <button onclick="cerrarModalAdmin('modal-tarea')" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:22px;cursor:pointer;color:inherit">✕</button>
+        <h3 style="margin-top:0">Crear tarea de cuidado</h3>
+        <form method="post">
+            <input type="hidden" name="nueva_tarea" value="1">
+            <label>Residente</label>
+            <select name="id_residente" class="buscador">
+                <?php foreach ($res as $x): ?>
+                    <option value="<?= $x['id_residente'] ?>" <?= $id_residente == $x['id_residente'] ? 'selected' : '' ?>><?= htmlspecialchars($x['nombre'] . ' ' . $x['apellido']) ?></option>
+                <?php endforeach; ?>
+            </select>
+            <label>Tipo de tarea</label>
+            <select name="tipo_tarea">
+                <option value="fija">Fija (se repite todos los días)</option>
+                <option value="puntual">Puntual (solo para un turno)</option>
+            </select>
+            <label>Tarea</label>
+            <input name="titulo" placeholder="Ej: controlar presión, baño, caminata" required>
+            <label>Horario</label>
+            <input type="time" name="horario">
+            <label>Detalle</label>
+            <textarea name="descripcion" placeholder="Descripción detallada de la tarea"></textarea>
+            <br>
+            <button type="submit" class="btn">Guardar</button>
+            <button type="button" class="btn gray" onclick="cerrarModalAdmin('modal-tarea')">Cancelar</button>
+        </form>
+    </div>
+</div>
+<?php js_modales_admin(['modal-tarea']); ?>
+<?php endif; ?>
+
+<?php aviso_solo_lectura(); ?>
+
+<h2>Tareas de cuidado</h2>
+<?php if (empty($tareas)): ?>
+    <?php sin_datos('No hay tareas de cuidado cargadas para mostrar.'); ?>
+<?php else: ?>
+<table class="datatable">
+    <thead><tr><th>Residente</th><th>Tarea</th><th>Tipo</th><th>Horario</th><th>Detalle</th><th>Último registro</th><th>Registrar estado</th></tr></thead>
+    <tbody>
+    <?php foreach ($tareas as $t): ?>
+        <tr>
+            <td><?= h($t['rn']) . ' ' . h($t['ra']) ?></td>
+            <td><?= htmlspecialchars($t['titulo']) ?></td>
+            <td><span class="badge"><?= h($t['tipo']) ?></span></td>
+            <td><b><?= $t['horario'] ?></b></td>
+            <td><?= htmlspecialchars($t['descripcion']) ?></td>
+            <td>
+                <div class="estado-cuadro <?= estado_class($t['ultimo_estado']) ?>"><?= estado_label($t['ultimo_estado']) ?></div>
+                <span class="small"><?= $t['ultimo_horario'] ?><?php if($t['ultimo_motivo']):?><br><?= htmlspecialchars($t['ultimo_motivo']) ?><?php endif;?></span>
+            </td>
+            <td>
+                <form method="post" class="accion-unica">
+                    <input type="hidden" name="id_tarea"     value="<?= $t['id_tarea'] ?>">
+                    <input type="hidden" name="id_residente" value="<?= $t['id_residente'] ?>">
+                    <select name="accion_tarea" class="selector-accion" required>
+                        <option value="">Elegir estado</option>
+                        <option value="realizada">🟢 Realizada</option>
+                        <option value="no_pudo">🟡 No pude realizarla</option>
+                        <option value="no_realizada">🔴 No realizada</option>
+                    </select>
+                    <textarea name="motivo" class="motivo-js" placeholder="Motivo obligatorio" style="display:none"></textarea>
+                    <button class="btn">Guardar</button>
+                </form>
+                <?php if(es_admin()):?><a class="btn red" href="?eliminar_tarea=<?= $t['id_tarea'] ?><?= sufijo_residente($id_residente) ?>" onclick="return confirmarLink(this,'¿Dar de baja esta tarea de cuidado?','Dar de baja','red')">Dar de baja</a><?php endif;?>
+            </td>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+<?php endif; ?>
+
+<?php js_selector_accion(); ?>
+
+<?php include '../config/footer.php'; ?>
