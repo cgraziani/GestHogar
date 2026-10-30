@@ -1,3 +1,1 @@
-﻿# GestHogar
-Sistema de gestion del Hogar Nongo.
-Historial importado de las versiones, con la fecha original de cada una.
+Sistema de gestion para tesis de Analista de sistemas
